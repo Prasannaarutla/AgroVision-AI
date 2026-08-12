@@ -31,7 +31,8 @@ __pycache__/
 *.log
 
 # Model files (optional)
-*.pt
+# *.pt
+!backend/best.pt
 
 # Env files
 .env

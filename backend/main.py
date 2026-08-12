@@ -23,7 +23,8 @@ app.add_middleware(
 )
 
 # Load model if available (mock otherwise)
-MODEL_PATH = "best.pt"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "best.pt")
 model = None
 
 try:
@@ -33,9 +34,9 @@ try:
         print("YOLOv8 model loaded successfully.")
         print(f"Model Classes: {model.names}")
     else:
-        print("Warning: best.pt not found. Running in mock mode.")
-except ImportError:
-    print("Warning: ultralytics not installed. Running in mock mode.")
+        print(f"Warning: {MODEL_PATH} not found. Running in mock mode.")
+except Exception as e:
+    print(f"Warning loading YOLO model ({e}). Running in mock mode.")
 
 @app.get("/")
 def read_root():
