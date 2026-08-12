@@ -1,4 +1,5 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import requests
@@ -432,7 +433,12 @@ async def predict(
             }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Prediction error: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Model error: {str(e)}"},
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
 
 def translate_store_info(text: str, lang: str) -> str:
     # Normalize language code

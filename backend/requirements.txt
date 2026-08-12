@@ -2,6 +2,7 @@ fastapi
 uvicorn
 python-multipart
 Pillow
+opencv-python-headless
 ultralytics
 requests
 pi-heif
