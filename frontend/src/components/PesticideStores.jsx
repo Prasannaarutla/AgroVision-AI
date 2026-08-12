@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { MapPin, ExternalLink, Loader2, Store, Star, WifiOff, Navigation, Search } from 'lucide-react';
+import { API_BASE_URL } from '../config';
 
 const PesticideStores = ({ t, isOffline, language = 'en' }) => {
   const [stores, setStores] = useState([]);
@@ -20,7 +21,7 @@ const PesticideStores = ({ t, isOffline, language = 'en' }) => {
       async (position) => {
         const { latitude, longitude } = position.coords;
         try {
-          const response = await fetch(`http://127.0.0.1:8000/nearby-stores?lat=${latitude}&lon=${longitude}&lang=${language}`);
+          const response = await fetch(`${API_BASE_URL}/nearby-stores?lat=${latitude}&lon=${longitude}&lang=${language}`);
           if (!response.ok) throw new Error("Failed to fetch stores");
           const data = await response.json();
           setStores(data.stores);

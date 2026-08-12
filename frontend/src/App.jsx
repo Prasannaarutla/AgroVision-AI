@@ -10,8 +10,9 @@ import SpreadPredictor from './components/SpreadPredictor';
 import OrganicTreatment from './components/OrganicTreatment';
 import { translations } from './utils/translations';
 import { Leaf, RefreshCw, Shield, Thermometer, Droplets, Layout, AlertCircle, Radio, Sprout, Languages, ChevronDown, Wifi, WifiOff } from 'lucide-react';
+import { API_BASE_URL } from './config';
 
-const API_URL = 'http://127.0.0.1:8000/predict';
+const API_URL = `${API_BASE_URL}/predict`;
 
 function App() {
   const [language, setLanguage] = useState('en');

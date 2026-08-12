@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Thermometer, Droplets, CloudRain, MapPin, RefreshCw, Settings, Save, AlertCircle, WifiOff } from 'lucide-react';
+import { API_BASE_URL } from '../config';
 
 const EnvironmentalForm = ({ envData, setEnvData, t, language, isOffline }) => {
   const [loading, setLoading] = useState(false);
@@ -14,7 +15,7 @@ const EnvironmentalForm = ({ envData, setEnvData, t, language, isOffline }) => {
     setIsManual(false);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/narsapur-weather');
+      const response = await fetch(`${API_BASE_URL}/narsapur-weather`);
       if (!response.ok) throw new Error("Local weather service unavailable");
       
       const data = await response.json();
