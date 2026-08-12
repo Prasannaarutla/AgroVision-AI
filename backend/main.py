@@ -195,6 +195,24 @@ def get_translated_organic(methods, lang):
     
     return translated
 
+def get_causes(d_name, sev):
+    causes = []
+    d = d_name.lower()
+    if "powdery" in d:
+        causes = ["fungalCause", "airCirculationCause", "waterImbalanceLess", "nutrientCause"]
+    elif "rust" in d:
+        causes = ["fungalCause", "waterImbalanceMore", "pestCause", "nutrientCause"]
+    elif "healthy" in d:
+        causes = ["healthyStatus", "maintenanceCause"]
+    else:
+        causes = ["environmentalStress", "nutrientWatch"]
+    
+    insight = "lowInsight"
+    if sev == "High": insight = "heavyInsight"
+    elif sev == "Medium": insight = "mediumInsight"
+    
+    return causes, insight
+
 @app.post("/predict")
 async def predict(
     file: UploadFile = File(...),
@@ -205,12 +223,16 @@ async def predict(
     rain_amount: float = Form(0.0),
     lang: str = Form("en")
 ):
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File provided is not an image.")
-
     try:
         image_data = await file.read()
-        image = Image.open(io.BytesIO(image_data)).convert('RGB')
+        try:
+            image = Image.open(io.BytesIO(image_data)).convert('RGB')
+        except Exception:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Uploaded file is not a valid image format."},
+                headers={"Access-Control-Allow-Origin": "*"}
+            )
         
         # If model is loaded, run inference
         model = get_model()
@@ -398,24 +420,6 @@ async def predict(
                         {"name": "Organic Compost", "instruction": "Apply well-decomposed organic compost to improve soil nutrients."},
                         {"name": "Improve Airflow", "instruction": "Prune excess foliage and increase spacing between plants."}
                     ]
-
-                # NEW: Rule-based possible causes
-                def get_causes(d_name, sev):
-                    causes = []
-                    if "powdery" in d_name:
-                        causes = ["fungalCause", "airCirculationCause", "waterImbalanceLess", "nutrientCause"]
-                    elif "rust" in d_name:
-                        causes = ["fungalCause", "waterImbalanceMore", "pestCause", "nutrientCause"]
-                    elif "healthy" in d_name:
-                        causes = ["healthyStatus", "maintenanceCause"]
-                    else:
-                        causes = ["environmentalStress", "nutrientWatch"]
-                    
-                    insight = "lowInsight"
-                    if sev == "High": insight = "heavyInsight"
-                    elif sev == "Medium": insight = "mediumInsight"
-                    
-                    return causes, insight
 
                 possible_causes, severity_insight = get_causes(d_name, severity)
 
