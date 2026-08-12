@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -23,21 +23,61 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load model if available (mock otherwise)
+@app.middleware("http")
+async def cors_handler_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return JSONResponse(
+            status_code=200,
+            content={"status": "ok"},
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+    try:
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+    except Exception as exc:
+        print(f"Unhandled server error: {exc}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Server error: {str(exc)}"},
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+
+# Load model lazily
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "best.pt")
-model = None
 
-try:
-    from ultralytics import YOLO
-    if os.path.exists(MODEL_PATH):
-        model = YOLO(MODEL_PATH)
-        print("YOLOv8 model loaded successfully.")
-        print(f"Model Classes: {model.names}")
-    else:
-        print(f"Warning: {MODEL_PATH} not found. Running in mock mode.")
-except Exception as e:
-    print(f"Warning loading YOLO model ({e}). Running in mock mode.")
+_model_instance = None
+_model_attempted = False
+
+def get_model():
+    global _model_instance, _model_attempted
+    if not _model_attempted:
+        _model_attempted = True
+        try:
+            import torch
+            torch.set_num_threads(1)
+            from ultralytics import YOLO
+            if os.path.exists(MODEL_PATH):
+                print(f"Loading YOLO model from {MODEL_PATH}...")
+                _model_instance = YOLO(MODEL_PATH)
+                print("YOLOv8 model loaded successfully.")
+                print(f"Model Classes: {_model_instance.names}")
+            else:
+                print(f"Warning: {MODEL_PATH} not found. Running in mock mode.")
+        except Exception as e:
+            print(f"Warning loading YOLO model ({e}). Running in mock mode.")
+    return _model_instance
 
 @app.get("/")
 def read_root():
@@ -173,8 +213,11 @@ async def predict(
         image = Image.open(io.BytesIO(image_data)).convert('RGB')
         
         # If model is loaded, run inference
+        model = get_model()
         if model is not None:
-            results = model(image)
+            import torch
+            with torch.no_grad():
+                results = model(image)
             
             # Generate annotated image
             annotated_img_array = results[0].plot()
