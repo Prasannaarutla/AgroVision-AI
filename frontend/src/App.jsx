@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import ImageUploader from './components/ImageUploader';
 import ResultCard from './components/ResultCard';
 import DosageCalculator from './components/DosageCalculator';
@@ -6,12 +6,12 @@ import HomeRemedies from './components/HomeRemedies';
 import PossibleCauses from './components/PossibleCauses';
 import { translations } from './utils/translations';
 import { getLocalizedHomeRemedies } from './utils/homeRemediesData';
-import { Leaf, RefreshCw, Shield, AlertCircle, Sprout, Languages, Camera, Wifi, WifiOff, Lightbulb, ServerCrash } from 'lucide-react';
+import { runOfflineDetection } from './utils/offlineDetector';
+import { Leaf, RefreshCw, Shield, AlertCircle, Sprout, Languages, Camera, Wifi, WifiOff, Lightbulb } from 'lucide-react';
 import { API_BASE_URL } from './config';
 
 const API_URL = `${API_BASE_URL}/predict`;
 
-// Fetch with timeout helper (for Render cold-start)
 async function fetchWithTimeout(url, options, timeoutMs = 65000) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -26,7 +26,6 @@ async function fetchWithTimeout(url, options, timeoutMs = 65000) {
 function App() {
   const [language, setLanguage] = useState('en');
   const t = translations[language] || translations.en;
-  
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [selectedImage, setSelectedImage] = useState(null);
   const [result, setResult] = useState(null);
@@ -34,26 +33,20 @@ function App() {
   const [error, setError] = useState(null);
   const [annotatedImage, setAnnotatedImage] = useState(null);
 
-  // Monitor network connection status
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
-
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-
-    // Pre-warm the backend on app load (prevents Render cold-start on first detect)
     if (navigator.onLine && API_BASE_URL) {
-      fetch(`${API_BASE_URL}/wake`).catch(() => {}); // Fire-and-forget, ignore errors
+      fetch(`${API_BASE_URL}/wake`).catch(() => {});
     }
-
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
 
-  // When language changes, update any active result's localized fields
   useEffect(() => {
     if (result && result.disease) {
       setResult(prev => ({
@@ -80,35 +73,36 @@ function App() {
 
   const handleDetect = async () => {
     if (!selectedImage) return;
-
-    // If device is offline, show offline message
-    if (!navigator.onLine || isOffline) {
-      setError(t.offlineBanner);
-      return;
-    }
-
     setLoading(true);
     setError(null);
 
-    // Send to backend YOLO model for accurate disease & bounding box detection
+    if (!navigator.onLine || isOffline) {
+      try {
+        const offlineResult = await runOfflineDetection(selectedImage, language);
+        const localRemedies = getLocalizedHomeRemedies(offlineResult.disease, language);
+        setResult({ ...offlineResult, home_remedies: localRemedies });
+        if (offlineResult.annotated_image) {
+          setAnnotatedImage(offlineResult.annotated_image);
+        }
+      } catch (err) {
+        console.error('Offline Detection Error:', err);
+        setError(t.analysisError);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
       const formData = new FormData();
       formData.append('file', selectedImage.file);
       formData.append('lang', language);
-
-      // Use 65s timeout to accommodate Render.com free-tier cold-start
-      const response = await fetchWithTimeout(API_URL, {
-        method: 'POST',
-        body: formData,
-      }, 65000);
-
+      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 65000);
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.detail || t.analysisError);
       }
-
       const data = await response.json();
-      // Always attach localized home remedies from frontend data (guaranteed)
       const localRemedies = getLocalizedHomeRemedies(data.disease, language);
       setResult({ ...data, home_remedies: localRemedies });
       if (data.annotated_image) {
@@ -117,7 +111,7 @@ function App() {
     } catch (err) {
       console.error('Detection Error:', err);
       if (err.name === 'AbortError') {
-        setError(t.serverWakingUp || 'Server is starting up. Please try again in a moment.');
+        setError(t.serverWakingUp || 'Server is starting up. Please wait 30 seconds and try again.');
       } else {
         setError(err.message || t.analysisError);
       }
@@ -128,91 +122,31 @@ function App() {
 
   return (
     <div className="app-container" style={{ paddingBottom: '5rem' }}>
-      {/* Header Section */}
-      <header style={{ 
-        display: 'flex', 
-        flexDirection: 'column', 
-        alignItems: 'center', 
-        textAlign: 'center', 
-        marginBottom: '3.5rem',
-        animation: 'fadeIn 1.2s ease-out'
-      }}>
-        <div style={{ 
-          background: 'linear-gradient(135deg, var(--primary), var(--secondary))', 
-          padding: '1.25rem', 
-          borderRadius: '28px',
-          marginBottom: '1.5rem',
-          boxShadow: '0 0 40px rgba(34, 197, 94, 0.35)',
-          animation: 'pulse 3s infinite'
-        }}>
+      <header style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', marginBottom: '3.5rem', animation: 'fadeIn 1.2s ease-out' }}>
+        <div style={{ background: 'linear-gradient(135deg, var(--primary), var(--secondary))', padding: '1.25rem', borderRadius: '28px', marginBottom: '1.5rem', boxShadow: '0 0 40px rgba(34, 197, 94, 0.35)', animation: 'pulse 3s infinite' }}>
           <Leaf size={44} color="white" />
         </div>
-        <h1 className="title" style={{ fontSize: '3.6rem', marginBottom: '0.5rem', letterSpacing: '-0.03em' }}>
-          {t.title}
-        </h1>
-        <p className="subtitle" style={{ fontSize: '1.25rem', opacity: 0.9, letterSpacing: '0.01em', maxWidth: '650px' }}>
-          {t.subtitle}
-        </p>
+        <h1 className="title" style={{ fontSize: '3.6rem', marginBottom: '0.5rem', letterSpacing: '-0.03em' }}>{t.title}</h1>
+        <p className="subtitle" style={{ fontSize: '1.25rem', opacity: 0.9, letterSpacing: '0.01em', maxWidth: '650px' }}>{t.subtitle}</p>
 
-        {/* Action Bar: Connection Status, Language Selector & Reset */}
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-          gap: '1.5rem',
-          marginTop: '2.5rem',
-          background: 'rgba(255,255,255,0.03)',
-          padding: '0.85rem 2.5rem',
-          borderRadius: '40px',
-          border: '1px solid var(--border)',
-          backdropFilter: 'blur(12px)'
-        }}>
-          {/* Connection Status Indicator */}
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '0.6rem', 
-            fontSize: '0.85rem', 
-            fontWeight: 800,
-            color: isOffline ? 'var(--danger)' : 'var(--primary)',
-          }}>
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', gap: '1.5rem', marginTop: '2.5rem', background: 'rgba(255,255,255,0.03)', padding: '0.85rem 2.5rem', borderRadius: '40px', border: '1px solid var(--border)', backdropFilter: 'blur(12px)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.85rem', fontWeight: 800, color: isOffline ? 'var(--danger)' : 'var(--primary)' }}>
             {isOffline ? <WifiOff size={18} /> : <Wifi size={18} />}
             <span>{isOffline ? t.offlineMode.toUpperCase() : t.onlineMode.toUpperCase()}</span>
           </div>
-
           <div style={{ width: '1px', height: '24px', background: 'var(--border)' }}></div>
-
-          {/* Language Selector */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <Languages size={19} style={{ color: 'var(--primary)' }} />
-            <select 
-              value={language} 
-              onChange={(e) => setLanguage(e.target.value)}
-              style={{ 
-                background: 'transparent', 
-                border: 'none', 
-                color: 'white', 
-                fontSize: '0.95rem', 
-                fontWeight: 800,
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
+            <select value={language} onChange={(e) => setLanguage(e.target.value)} style={{ background: 'transparent', border: 'none', color: 'white', fontSize: '0.95rem', fontWeight: 800, outline: 'none', cursor: 'pointer' }}>
               <option value="en" style={{ background: '#020617' }}>English</option>
-              <option value="te" style={{ background: '#020617' }}>తెలుగు (Telugu)</option>
-              <option value="hi" style={{ background: '#020617' }}>हिन्दी (Hindi)</option>
+              <option value="te" style={{ background: '#020617' }}>?????? (Telugu)</option>
+              <option value="hi" style={{ background: '#020617' }}>?????? (Hindi)</option>
             </select>
           </div>
-
           {selectedImage && (
             <>
               <div style={{ width: '1px', height: '24px', background: 'var(--border)' }}></div>
-              <button 
-                className="secondary-button" 
-                onClick={handleReset} 
-                style={{ padding: '0.45rem 1.1rem', fontSize: '0.85rem', gap: '0.5rem', borderRadius: '12px' }}
-              >
+              <button className="secondary-button" onClick={handleReset} style={{ padding: '0.45rem 1.1rem', fontSize: '0.85rem', gap: '0.5rem', borderRadius: '12px' }}>
                 <RefreshCw size={14} /> {t.reset}
               </button>
             </>
@@ -220,101 +154,40 @@ function App() {
         </div>
       </header>
 
-      {/* Offline Alert Banner: Just displays "You are offline" */}
       {isOffline && (
-        <div style={{ 
-          background: '#dc2626', 
-          color: 'white', 
-          padding: '0.65rem 1.25rem', 
-          textAlign: 'center', 
-          fontSize: '0.9rem', 
-          fontWeight: 700,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '0.6rem',
-          marginBottom: '2rem',
-          borderRadius: '14px',
-          boxShadow: '0 4px 20px rgba(220, 38, 38, 0.3)',
-          animation: 'slideDown 0.3s ease-out'
-        }}>
-          <WifiOff size={18} /> 
-          <span>{t.offlineBanner}</span>
+        <div style={{ background: 'rgba(220,38,38,0.15)', color: '#fca5a5', padding: '0.65rem 1.25rem', textAlign: 'center', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.6rem', marginBottom: '2rem', borderRadius: '14px', border: '1px solid rgba(220,38,38,0.4)', boxShadow: '0 4px 20px rgba(220,38,38,0.15)', animation: 'slideDown 0.3s ease-out' }}>
+          <WifiOff size={18} />
+          <span>{t.offlineBanner} � {t.offlineDetectNote || 'Offline AI detection active'}</span>
         </div>
       )}
 
-      {/* Main Grid: Upload on Left, Results & Home Remedies on Right */}
       <div className="dashboard-grid">
-        {/* Left Column: Image Upload & Scanning Guidance */}
         <div className="sticky-column">
           <div className="glass-panel">
             <div className="section-header">
               <div className="icon-box"><Camera size={20} /></div>
               <h2>{t.uploadTitle}</h2>
             </div>
-            
-            <ImageUploader 
-              onImageSelect={handleImageSelect} 
-              selectedImage={selectedImage}
-              annotatedImage={annotatedImage} 
-              t={t}
-            />
-            
-            <button 
-              onClick={handleDetect} 
-              disabled={!selectedImage || loading}
-              style={{ width: '100%', marginTop: '1.5rem', padding: '1.2rem' }}
-            >
-              {loading ? (
-                <>
-                  <RefreshCw size={20} className="spin" />
-                  <span>{t.analyzing}</span>
-                </>
-              ) : (
-                <>
-                  <Shield size={20} />
-                  <span>{t.detectButton}</span>
-                </>
-              )}
+            <ImageUploader onImageSelect={handleImageSelect} selectedImage={selectedImage} annotatedImage={annotatedImage} t={t} />
+            <button onClick={handleDetect} disabled={!selectedImage || loading} style={{ width: '100%', marginTop: '1.5rem', padding: '1.2rem' }}>
+              {loading ? (<><RefreshCw size={20} className="spin" /><span>{t.analyzing}</span></>) : (<><Shield size={20} /><span>{t.detectButton}</span></>)}
             </button>
-            {loading && (
-              <p style={{ 
-                textAlign: 'center',
-                fontSize: '0.78rem',
-                color: 'var(--text-secondary)',
-                fontWeight: 600,
-                marginTop: '0.6rem',
-                opacity: 0.8
-              }}>
-                ⏳ {t.serverWarmUp}
+            {loading && !isOffline && (
+              <p style={{ textAlign: 'center', fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600, marginTop: '0.6rem', opacity: 0.8 }}>
+                ? {t.serverWarmUp}
               </p>
             )}
-
             {error && (
-              <div style={{ 
-                marginTop: '1.5rem', 
-                padding: '1rem', 
-                background: 'rgba(239, 68, 68, 0.1)', 
-                borderLeft: '4px solid var(--danger)', 
-                borderRadius: '12px', 
-                color: 'var(--danger)', 
-                fontSize: '0.85rem', 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '0.5rem' 
-              }}>
+              <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'rgba(239,68,68,0.1)', borderLeft: '4px solid var(--danger)', borderRadius: '12px', color: 'var(--danger)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <AlertCircle size={18} /> {error}
               </div>
             )}
           </div>
 
-          {/* Photo Tips Card */}
           <div className="glass-panel" style={{ marginTop: '1.5rem', padding: '1.5rem', border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', color: 'var(--primary)' }}>
               <Lightbulb size={18} />
-              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, margin: 0, color: 'white' }}>
-                {t.photoTipsTitle || "Photo Tips for Best Detection"}
-              </h4>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, margin: 0, color: 'white' }}>{t.photoTipsTitle || "Photo Tips for Best Detection"}</h4>
             </div>
             <ul style={{ margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
               <li>{t.tipFocus || "Focus closely on the leaf and diseased spots"}</li>
@@ -324,45 +197,20 @@ function App() {
           </div>
         </div>
 
-        {/* Right Column: AI Report, Home Remedies & Treatment Plan */}
         <div className="scroll-column">
           {!result ? (
-            <div className="glass-panel" style={{ 
-              height: '100%', 
-              minHeight: '420px',
-              display: 'flex', 
-              flexDirection: 'column', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
-              textAlign: 'center', 
-              gap: '1.5rem', 
-              padding: '4rem 2rem', 
-              borderStyle: 'dashed' 
-            }}>
-              <div style={{ background: 'rgba(34, 197, 94, 0.08)', padding: '2rem', borderRadius: '50%', color: 'var(--primary)' }}>
-                <Sprout size={64} />
-              </div>
+            <div className="glass-panel" style={{ height: '100%', minHeight: '420px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: '1.5rem', padding: '4rem 2rem', borderStyle: 'dashed' }}>
+              <div style={{ background: 'rgba(34,197,94,0.08)', padding: '2rem', borderRadius: '50%', color: 'var(--primary)' }}><Sprout size={64} /></div>
               <div>
-                <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.5rem', color: 'white' }}>
-                  {t.readyToAnalyzeTitle}
-                </h2>
-                <p style={{ color: 'var(--text-secondary)', maxWidth: '420px', margin: '0 auto', lineHeight: 1.6 }}>
-                  {t.readyToAnalyzeDesc}
-                </p>
+                <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.5rem', color: 'white' }}>{t.readyToAnalyzeTitle}</h2>
+                <p style={{ color: 'var(--text-secondary)', maxWidth: '420px', margin: '0 auto', lineHeight: 1.6 }}>{t.readyToAnalyzeDesc}</p>
               </div>
             </div>
           ) : (
             <>
-              {/* 1. Primary AI Diagnostic Report */}
               <ResultCard result={result} t={t} language={language} />
-              
-              {/* 2. REQUIRED HOME REMEDIES SECTION (Dynamically localized) */}
               <HomeRemedies result={result} t={t} language={language} />
-
-              {/* 3. Field Dosage Calculator */}
               <DosageCalculator result={result} t={t} />
-
-              {/* 4. Underlying Causes & Insights */}
               {result.possible_causes && <PossibleCauses result={result} t={t} />}
             </>
           )}

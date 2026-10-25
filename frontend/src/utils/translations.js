@@ -139,7 +139,8 @@ export const translations = {
     tipLighting: "Capture in natural daylight without shadows",
     tipBackground: "Place leaf on a plain neutral background",
     serverWakingUp: "AI server is starting up. Please wait 30 seconds and try again.",
-    serverWarmUp: "AI server may take up to 30s on first use..."
+    serverWarmUp: "AI server may take up to 30s on first use...",
+    offlineDetectNote: "Offline AI detection is active"
   },
   te: {
     title: "అగ్రోవిజన్ AI",
@@ -281,7 +282,8 @@ export const translations = {
     tipLighting: "నీడలు లేకుండా మంచి వెలుతురులో ఫోటో తీయండి",
     tipBackground: "స్పష్టమైన ఫలితాల కోసం ఆకు వెనుక సాదా నేపథ్యం ఉంచండి",
     serverWakingUp: "AI సర్వర్ ప్రారంభమవుతోంది. 30 సెకన్లు వేచి ఉండి మళ్ళీ ప్రయత్నించండి.",
-    serverWarmUp: "AI సర్వర్ మొదటిసారి 30 సెకన్లు తీసుకోవచ్చు..."
+    serverWarmUp: "AI సర్వర్ మొదటిసారి 30 సెకన్లు తీసుకోవచ్చు...",
+    offlineDetectNote: "ఆఫ్‌లైన్ AI గుర్తింపు సక్రియంగా ఉంది"
   },
   hi: {
     title: "एग्रोविजन AI",
@@ -423,6 +425,7 @@ export const translations = {
     tipLighting: "छाया के बिना प्राकृतिक धूप में फोटो लें",
     tipBackground: "सटीक जांच के लिए पत्ती को साफ पृष्ठभूमि पर रखें",
     serverWakingUp: "AI सर्वर शुरू हो रहा है। 30 सेकंड प्रतीक्षा करें और पुनः प्रयास करें।",
-    serverWarmUp: "AI सर्वर पहली बार 30 सेकंड ले सकता है..."
+    serverWarmUp: "AI सर्वर पहली बार 30 सेकंड ले सकता है...",
+    offlineDetectNote: "ऑफलाइन AI पहचान सक्रिय है"
   }
 };
