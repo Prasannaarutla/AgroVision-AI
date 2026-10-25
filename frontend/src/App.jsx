@@ -1,3 +1,4 @@
+// AgroVision AI - v1.3 (improved cloud timeout + refined lesion detection)
 import React, { useState, useEffect } from 'react';
 import ImageUploader from './components/ImageUploader';
 import ResultCard from './components/ResultCard';
