@@ -145,13 +145,15 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
               }
 
               // 3. RUST DISEASE IDENTIFICATION:
-              // Warm orange, fiery yellow-orange, or reddish-brown rust pustules on leaf blade
+              // Warm fiery orange or reddish-brown rust pustules on leaf blade
+              // Rust has strong red elevation over green (r > g * 1.10) and blue (r > b * 1.55)
               const isRustSpot = (
-                r > 95 && 
-                r > b * 1.45 && 
-                r > g * 1.04 && 
-                b < 100 && 
-                g > 30
+                r > 105 && 
+                r > b * 1.55 && 
+                r > g * 1.10 && 
+                b < 95 && 
+                g > 35 &&
+                g < 170
               );
 
               if (isRustSpot) {
@@ -161,15 +163,15 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
               }
 
               // 4. POWDERY MILDEW IDENTIFICATION:
-              // Pale chalky whitish/grayish-green fungal coating on the surface of green foliage.
+              // Pale chalky whitish/grayish fungal coating on foliage.
               const brightness = (r + g + b) / 3;
               const isPowderySpot = (
-                isGreenLeaf && 
-                brightness > 135 && 
-                r > 120 && 
-                g > 130 && 
-                (r + g) > b * 2.15 &&
-                Math.abs(r - g) < 32
+                (isGreenLeaf || brightness > 125) && 
+                brightness > 130 && 
+                r > 110 && 
+                g > 120 && 
+                (r + g) > b * 2.0 &&
+                Math.abs(r - g) < 35
               );
 
               if (isPowderySpot) {
@@ -188,9 +190,66 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
           let severity = "Low";
           let isDetected = false;
 
-          // EVALUATE DISEASE BASED ON ACTUAL LESION EVIDENCE
-          // If rust spots are found (even 45+ clustered rust pixels), identify as RUST
-          if (rustRatio > 0.008 || rustPixels >= 45) {
+          // EVALUATE DISEASE BASED ON ACTUAL LESION EVIDENCE & RELATIVE DOMINANCE
+          const hasRust = (rustRatio > 0.010 || rustPixels >= 70);
+          const hasPowdery = (powderyRatio > 0.012 || powderyPixels >= 70);
+
+          let isRust = false;
+          let isPowdery = false;
+
+          if (hasRust && hasPowdery) {
+            // Both detected - choose whichever has significantly stronger visual evidence
+            if (powderyPixels >= rustPixels * 1.25 || powderyRatio >= rustRatio * 1.25) {
+              isPowdery = true;
+            } else if (rustPixels >= powderyPixels * 1.25 || rustRatio >= powderyRatio * 1.25) {
+              isRust = true;
+            } else {
+              // Whichever has higher lesion pixel count
+              isPowdery = powderyPixels >= rustPixels;
+              isRust = !isPowdery;
+            }
+          } else if (hasPowdery) {
+            isPowdery = true;
+          } else if (hasRust) {
+            isRust = true;
+          }
+
+          if (isPowdery) {
+            detectedDisease = "POWDERY";
+            confidence = Math.min(0.94, Math.max(0.74, 0.70 + Math.min(0.24, powderyRatio * 6.5)));
+            severity = confidence > 0.82 ? "High" : confidence > 0.65 ? "Medium" : "Low";
+            isDetected = true;
+
+            // Generate clean bounding boxes around powdery mildew patches
+            const powderyBoxes = clusterPointsIntoBoundingBoxes(powderyPoints, 38, 5);
+
+            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = '#38bdf8';
+            ctx.fillStyle = 'rgba(56, 189, 248, 0.20)';
+
+            for (const box of powderyBoxes) {
+              ctx.strokeRect(box.x, box.y, box.w, box.h);
+              ctx.fillRect(box.x, box.y, box.w, box.h);
+
+              // Spot label tag
+              ctx.fillStyle = '#38bdf8';
+              ctx.fillRect(box.x, Math.max(0, box.y - 18), 65, 18);
+              ctx.fillStyle = '#020617';
+              ctx.font = 'bold 11px Inter, sans-serif';
+              ctx.fillText('POWDERY', box.x + 4, Math.max(12, box.y - 5));
+            }
+
+            // Main Diagnostic HUD Banner
+            ctx.fillStyle = 'rgba(2, 6, 23, 0.88)';
+            ctx.fillRect(16, 16, 280, 42);
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(16, 16, 280, 42);
+            ctx.fillStyle = '#38bdf8';
+            ctx.font = 'bold 17px Inter, sans-serif';
+            ctx.fillText(`POWDERY MILDEW (${Math.round(confidence * 100)}%)`, 28, 43);
+
+          } else if (isRust) {
             detectedDisease = "RUST";
             confidence = Math.min(0.95, Math.max(0.76, 0.70 + Math.min(0.24, rustRatio * 7.5)));
             severity = confidence > 0.84 ? "High" : confidence > 0.65 ? "Medium" : "Low";
@@ -224,41 +283,6 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
             ctx.fillStyle = '#f97316';
             ctx.font = 'bold 17px Inter, sans-serif';
             ctx.fillText(`LEAF RUST (${Math.round(confidence * 100)}%)`, 28, 43);
-
-          } else if (powderyRatio > 0.015 || powderyPixels >= 70) {
-            detectedDisease = "POWDERY";
-            confidence = Math.min(0.94, Math.max(0.74, 0.68 + Math.min(0.24, powderyRatio * 6.0)));
-            severity = confidence > 0.82 ? "High" : confidence > 0.65 ? "Medium" : "Low";
-            isDetected = true;
-
-            // Generate clean bounding boxes around powdery mildew patches
-            const powderyBoxes = clusterPointsIntoBoundingBoxes(powderyPoints, 38, 5);
-
-            ctx.lineWidth = 2.5;
-            ctx.strokeStyle = '#38bdf8';
-            ctx.fillStyle = 'rgba(56, 189, 248, 0.20)';
-
-            for (const box of powderyBoxes) {
-              ctx.strokeRect(box.x, box.y, box.w, box.h);
-              ctx.fillRect(box.x, box.y, box.w, box.h);
-
-              // Spot label tag
-              ctx.fillStyle = '#38bdf8';
-              ctx.fillRect(box.x, Math.max(0, box.y - 18), 65, 18);
-              ctx.fillStyle = '#020617';
-              ctx.font = 'bold 11px Inter, sans-serif';
-              ctx.fillText('POWDERY', box.x + 4, Math.max(12, box.y - 5));
-            }
-
-            // Main Diagnostic HUD Banner
-            ctx.fillStyle = 'rgba(2, 6, 23, 0.88)';
-            ctx.fillRect(16, 16, 280, 42);
-            ctx.strokeStyle = '#38bdf8';
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(16, 16, 280, 42);
-            ctx.fillStyle = '#38bdf8';
-            ctx.font = 'bold 17px Inter, sans-serif';
-            ctx.fillText(`POWDERY MILDEW (${Math.round(confidence * 100)}%)`, 28, 43);
 
           } else {
             detectedDisease = "HEALTHY";

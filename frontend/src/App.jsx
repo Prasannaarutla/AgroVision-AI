@@ -1,4 +1,4 @@
-// AgroVision AI - v1.3 (improved cloud timeout + refined lesion detection)
+// AgroVision AI - v1.4 (aligned deployed cloud timeout & precise lesion comparison)
 import React, { useState, useEffect } from 'react';
 import ImageUploader from './components/ImageUploader';
 import ResultCard from './components/ResultCard';
@@ -13,7 +13,7 @@ import { API_BASE_URL } from './config';
 
 const API_URL = `${API_BASE_URL}/predict`;
 
-async function fetchWithTimeout(url, options, timeoutMs = 65000) {
+async function fetchWithTimeout(url, options, timeoutMs = 85000) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -96,12 +96,12 @@ function App() {
 
     let completed = false;
 
-    // 1. Try Cloud API (45s timeout to allow YOLOv8 model inference & Render wake-up)
+    // 1. Try Cloud API (80s timeout to allow YOLOv8 model inference & Render wake-up)
     try {
       const formData = new FormData();
       formData.append('file', selectedImage.file);
       formData.append('lang', language);
-      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 45000);
+      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 80000);
       if (response && response.ok) {
         const data = await response.json();
         if (data && data.disease) {

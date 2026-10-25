@@ -9,7 +9,10 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 import torch
-torch.set_num_threads(1)
+try:
+    torch.set_num_threads(min(2, os.cpu_count() or 1))
+except Exception:
+    pass
 
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.responses import JSONResponse
@@ -519,8 +522,8 @@ async def predict(
             image = Image.open(io.BytesIO(image_data))
             # Auto-rotate based on EXIF tag to fix smartphone photo orientation
             image = ImageOps.exif_transpose(image).convert('RGB')
-            # Downscale large smartphone photos to max 800x800 to prevent OOM on 512MB RAM server
-            image.thumbnail((800, 800), Image.Resampling.LANCZOS)
+            # Downscale large smartphone photos to 512x512 to prevent OOM and speed up inference
+            image.thumbnail((512, 512), Image.Resampling.BILINEAR)
         except Exception:
             return JSONResponse(
                 status_code=400,
