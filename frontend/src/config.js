@@ -7,7 +7,8 @@ function getApiBaseUrl() {
     if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
       return 'http://127.0.0.1:8000';
     }
-    return '';
+    // Production default: connect to deployed Render backend
+    return 'https://agrovision-backend-rgmi.onrender.com';
   }
 
   // If Render or user passed hostname without protocol (e.g. "agrovision-backend.onrender.com")
