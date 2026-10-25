@@ -1,37 +1,67 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import ImageUploader from './components/ImageUploader';
 import ResultCard from './components/ResultCard';
 import DosageCalculator from './components/DosageCalculator';
-import EnvironmentalForm from './components/EnvironmentalForm';
-import PesticideStores from './components/PesticideStores';
-import EnvironmentalInsights from './components/EnvironmentalInsights';
+import HomeRemedies from './components/HomeRemedies';
 import PossibleCauses from './components/PossibleCauses';
-import SpreadPredictor from './components/SpreadPredictor';
-import OrganicTreatment from './components/OrganicTreatment';
 import { translations } from './utils/translations';
-import { Leaf, RefreshCw, Shield, Thermometer, Droplets, Layout, AlertCircle, Radio, Sprout, Languages, ChevronDown, Wifi, WifiOff } from 'lucide-react';
+import { getLocalizedHomeRemedies } from './utils/homeRemediesData';
+import { Leaf, RefreshCw, Shield, AlertCircle, Sprout, Languages, Camera, Wifi, WifiOff, Lightbulb, ServerCrash } from 'lucide-react';
 import { API_BASE_URL } from './config';
 
 const API_URL = `${API_BASE_URL}/predict`;
 
+// Fetch with timeout helper (for Render cold-start)
+async function fetchWithTimeout(url, options, timeoutMs = 65000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 function App() {
   const [language, setLanguage] = useState('en');
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  const t = translations[language];
+  const t = translations[language] || translations.en;
   
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [selectedImage, setSelectedImage] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [annotatedImage, setAnnotatedImage] = useState(null);
-  const [envData, setEnvData] = useState({ 
-    temperature: '', 
-    humidity: '', 
-    rain: 'No', 
-    city: '',
-    rain_amount: 0,
-    rain_status: ''
-  });
+
+  // Monitor network connection status
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Pre-warm the backend on app load (prevents Render cold-start on first detect)
+    if (navigator.onLine && API_BASE_URL) {
+      fetch(`${API_BASE_URL}/wake`).catch(() => {}); // Fire-and-forget, ignore errors
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // When language changes, update any active result's localized fields
+  useEffect(() => {
+    if (result && result.disease) {
+      setResult(prev => ({
+        ...prev,
+        home_remedies: getLocalizedHomeRemedies(prev.disease, language)
+      }));
+    }
+  }, [language]);
 
   const handleImageSelect = (fileData) => {
     setSelectedImage(fileData);
@@ -39,19 +69,6 @@ function App() {
     setAnnotatedImage(null);
     setError(null);
   };
-
-  React.useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
 
   const handleReset = () => {
     setSelectedImage(null);
@@ -64,36 +81,46 @@ function App() {
   const handleDetect = async () => {
     if (!selectedImage) return;
 
+    // If device is offline, show offline message
+    if (!navigator.onLine || isOffline) {
+      setError(t.offlineBanner);
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
-    const formData = new FormData();
-    formData.append('file', selectedImage.file);
-    if (envData.temperature) formData.append('temperature', envData.temperature);
-    if (envData.humidity) formData.append('humidity', envData.humidity);
-    formData.append('rain', envData.rain);
-    formData.append('rain_status', envData.rain_status || 'No Rain');
-    formData.append('rain_amount', envData.rain_amount || 0);
-    formData.append('lang', language);
-
+    // Send to backend YOLO model for accurate disease & bounding box detection
     try {
-      const response = await fetch(API_URL, {
+      const formData = new FormData();
+      formData.append('file', selectedImage.file);
+      formData.append('lang', language);
+
+      // Use 65s timeout to accommodate Render.com free-tier cold-start
+      const response = await fetchWithTimeout(API_URL, {
         method: 'POST',
         body: formData,
-      });
+      }, 65000);
 
       if (!response.ok) {
-        throw new Error('Failed to get prediction from server');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || t.analysisError);
       }
 
       const data = await response.json();
-      setResult(data);
+      // Always attach localized home remedies from frontend data (guaranteed)
+      const localRemedies = getLocalizedHomeRemedies(data.disease, language);
+      setResult({ ...data, home_remedies: localRemedies });
       if (data.annotated_image) {
         setAnnotatedImage(data.annotated_image);
       }
     } catch (err) {
       console.error('Detection Error:', err);
-      setError(t.analysisError);
+      if (err.name === 'AbortError') {
+        setError(t.serverWakingUp || 'Server is starting up. Please try again in a moment.');
+      } else {
+        setError(err.message || t.analysisError);
+      }
     } finally {
       setLoading(false);
     }
@@ -101,39 +128,47 @@ function App() {
 
   return (
     <div className="app-container" style={{ paddingBottom: '5rem' }}>
+      {/* Header Section */}
       <header style={{ 
         display: 'flex', 
         flexDirection: 'column', 
         alignItems: 'center', 
-        textAlign: 'center',
-        marginBottom: '5rem',
+        textAlign: 'center', 
+        marginBottom: '3.5rem',
         animation: 'fadeIn 1.2s ease-out'
       }}>
         <div style={{ 
           background: 'linear-gradient(135deg, var(--primary), var(--secondary))', 
           padding: '1.25rem', 
           borderRadius: '28px',
-          marginBottom: '2rem',
-          boxShadow: '0 0 40px rgba(34, 197, 94, 0.3)',
+          marginBottom: '1.5rem',
+          boxShadow: '0 0 40px rgba(34, 197, 94, 0.35)',
           animation: 'pulse 3s infinite'
         }}>
-          <Leaf size={48} color="white" />
+          <Leaf size={44} color="white" />
         </div>
-        <h1 className="title" style={{ fontSize: '4rem', marginBottom: '0.75rem' }}>{t.title}</h1>
-        <p className="subtitle" style={{ fontSize: '1.4rem', opacity: 0.9, letterSpacing: '0.01em' }}>{t.subtitle}</p>
+        <h1 className="title" style={{ fontSize: '3.6rem', marginBottom: '0.5rem', letterSpacing: '-0.03em' }}>
+          {t.title}
+        </h1>
+        <p className="subtitle" style={{ fontSize: '1.25rem', opacity: 0.9, letterSpacing: '0.01em', maxWidth: '650px' }}>
+          {t.subtitle}
+        </p>
 
+        {/* Action Bar: Connection Status, Language Selector & Reset */}
         <div style={{ 
           display: 'flex', 
           alignItems: 'center', 
-          gap: '2rem',
-          marginTop: '3.5rem',
+          flexWrap: 'wrap',
+          justifyContent: 'center',
+          gap: '1.5rem',
+          marginTop: '2.5rem',
           background: 'rgba(255,255,255,0.03)',
           padding: '0.85rem 2.5rem',
           borderRadius: '40px',
           border: '1px solid var(--border)',
-          backdropFilter: 'blur(10px)'
+          backdropFilter: 'blur(12px)'
         }}>
-          {/* Connection Status */}
+          {/* Connection Status Indicator */}
           <div style={{ 
             display: 'flex', 
             alignItems: 'center', 
@@ -143,14 +178,14 @@ function App() {
             color: isOffline ? 'var(--danger)' : 'var(--primary)',
           }}>
             {isOffline ? <WifiOff size={18} /> : <Wifi size={18} />}
-            {isOffline ? t.offlineMode.toUpperCase() : t.onlineMode.toUpperCase()}
+            <span>{isOffline ? t.offlineMode.toUpperCase() : t.onlineMode.toUpperCase()}</span>
           </div>
 
           <div style={{ width: '1px', height: '24px', background: 'var(--border)' }}></div>
 
           {/* Language Selector */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <Languages size={20} style={{ color: 'var(--primary)' }} />
+            <Languages size={19} style={{ color: 'var(--primary)' }} />
             <select 
               value={language} 
               onChange={(e) => setLanguage(e.target.value)}
@@ -176,7 +211,7 @@ function App() {
               <button 
                 className="secondary-button" 
                 onClick={handleReset} 
-                style={{ padding: '0.5rem 1.25rem', fontSize: '0.85rem', gap: '0.5rem', borderRadius: '14px' }}
+                style={{ padding: '0.45rem 1.1rem', fontSize: '0.85rem', gap: '0.5rem', borderRadius: '12px' }}
               >
                 <RefreshCw size={14} /> {t.reset}
               </button>
@@ -185,34 +220,36 @@ function App() {
         </div>
       </header>
 
-      {/* Offline Alert Banner */}
+      {/* Offline Alert Banner: Just displays "You are offline" */}
       {isOffline && (
         <div style={{ 
-          background: 'var(--danger)', 
+          background: '#dc2626', 
           color: 'white', 
-          padding: '0.5rem', 
+          padding: '0.65rem 1.25rem', 
           textAlign: 'center', 
-          fontSize: '0.85rem', 
+          fontSize: '0.9rem', 
           fontWeight: 700,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: '0.5rem',
-          marginBottom: '1rem',
-          borderRadius: '8px',
+          gap: '0.6rem',
+          marginBottom: '2rem',
+          borderRadius: '14px',
+          boxShadow: '0 4px 20px rgba(220, 38, 38, 0.3)',
           animation: 'slideDown 0.3s ease-out'
         }}>
-          <WifiOff size={16} /> {t.offlineBanner}
+          <WifiOff size={18} /> 
+          <span>{t.offlineBanner}</span>
         </div>
       )}
 
+      {/* Main Grid: Upload on Left, Results & Home Remedies on Right */}
       <div className="dashboard-grid">
+        {/* Left Column: Image Upload & Scanning Guidance */}
         <div className="sticky-column">
-          <EnvironmentalForm envData={envData} setEnvData={setEnvData} t={t} language={language} isOffline={isOffline} />
-          
           <div className="glass-panel">
             <div className="section-header">
-              <div className="icon-box"><Layout size={20} /></div>
+              <div className="icon-box"><Camera size={20} /></div>
               <h2>{t.uploadTitle}</h2>
             </div>
             
@@ -226,7 +263,7 @@ function App() {
             <button 
               onClick={handleDetect} 
               disabled={!selectedImage || loading}
-              style={{ width: '100%', marginTop: '1.5rem', py: '1.2rem' }}
+              style={{ width: '100%', marginTop: '1.5rem', padding: '1.2rem' }}
             >
               {loading ? (
                 <>
@@ -240,42 +277,93 @@ function App() {
                 </>
               )}
             </button>
+            {loading && (
+              <p style={{ 
+                textAlign: 'center',
+                fontSize: '0.78rem',
+                color: 'var(--text-secondary)',
+                fontWeight: 600,
+                marginTop: '0.6rem',
+                opacity: 0.8
+              }}>
+                ⏳ {t.serverWarmUp}
+              </p>
+            )}
 
             {error && (
-              <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'rgba(239, 68, 68, 0.1)', borderLeft: '4px solid var(--danger)', borderRadius: '12px', color: 'var(--danger)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <div style={{ 
+                marginTop: '1.5rem', 
+                padding: '1rem', 
+                background: 'rgba(239, 68, 68, 0.1)', 
+                borderLeft: '4px solid var(--danger)', 
+                borderRadius: '12px', 
+                color: 'var(--danger)', 
+                fontSize: '0.85rem', 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '0.5rem' 
+              }}>
                 <AlertCircle size={18} /> {error}
               </div>
             )}
           </div>
+
+          {/* Photo Tips Card */}
+          <div className="glass-panel" style={{ marginTop: '1.5rem', padding: '1.5rem', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', color: 'var(--primary)' }}>
+              <Lightbulb size={18} />
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 800, margin: 0, color: 'white' }}>
+                {t.photoTipsTitle || "Photo Tips for Best Detection"}
+              </h4>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              <li>{t.tipFocus || "Focus closely on the leaf and diseased spots"}</li>
+              <li>{t.tipLighting || "Ensure bright, natural daylight without harsh shadows"}</li>
+              <li>{t.tipBackground || "Avoid cluttered backgrounds for clear AI diagnostics"}</li>
+            </ul>
+          </div>
         </div>
 
+        {/* Right Column: AI Report, Home Remedies & Treatment Plan */}
         <div className="scroll-column">
           {!result ? (
-            <div className="glass-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: '1.5rem', padding: '4rem 2rem', borderStyle: 'dashed' }}>
-              <div style={{ background: 'rgba(59, 130, 246, 0.05)', padding: '2rem', borderRadius: '50%', color: 'var(--secondary)' }}>
+            <div className="glass-panel" style={{ 
+              height: '100%', 
+              minHeight: '420px',
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              textAlign: 'center', 
+              gap: '1.5rem', 
+              padding: '4rem 2rem', 
+              borderStyle: 'dashed' 
+            }}>
+              <div style={{ background: 'rgba(34, 197, 94, 0.08)', padding: '2rem', borderRadius: '50%', color: 'var(--primary)' }}>
                 <Sprout size={64} />
               </div>
               <div>
-                <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.5rem' }}>{t.readyToAnalyzeTitle}</h2>
-                <p style={{ color: 'var(--text-secondary)', maxWidth: '400px' }}>{t.readyToAnalyzeDesc}</p>
+                <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.5rem', color: 'white' }}>
+                  {t.readyToAnalyzeTitle}
+                </h2>
+                <p style={{ color: 'var(--text-secondary)', maxWidth: '420px', margin: '0 auto', lineHeight: 1.6 }}>
+                  {t.readyToAnalyzeDesc}
+                </p>
               </div>
             </div>
           ) : (
             <>
-              <ResultCard result={result} loading={loading} t={t} language={language} />
+              {/* 1. Primary AI Diagnostic Report */}
+              <ResultCard result={result} t={t} language={language} />
               
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-                {result.environmental_insights && <EnvironmentalInsights insights={result.environmental_insights} t={t} />}
-                {result.spread_prediction && <SpreadPredictor prediction={result.spread_prediction} t={t} />}
-              </div>
+              {/* 2. REQUIRED HOME REMEDIES SECTION (Dynamically localized) */}
+              <HomeRemedies result={result} t={t} language={language} />
 
-              {result.possible_causes && <PossibleCauses result={result} t={t} />}
-
-              {result.organic_treatment && <OrganicTreatment treatment={result.organic_treatment} t={t} />}
-              
+              {/* 3. Field Dosage Calculator */}
               <DosageCalculator result={result} t={t} />
-              
-              <PesticideStores t={t} isOffline={isOffline} language={language} />
+
+              {/* 4. Underlying Causes & Insights */}
+              {result.possible_causes && <PossibleCauses result={result} t={t} />}
             </>
           )}
         </div>

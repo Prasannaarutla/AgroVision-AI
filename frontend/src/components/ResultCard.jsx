@@ -1,7 +1,7 @@
 import React from 'react';
-import { Shield, AlertTriangle, CheckCircle2, Info, TrendingUp, Zap, Activity } from 'lucide-react';
+import { AlertTriangle, Activity, Zap } from 'lucide-react';
 
-const ResultCard = ({ result, loading, t, language }) => {
+const ResultCard = ({ result, t, language }) => {
   if (!result) return null;
 
   const getSeverityInfo = (sev) => {
@@ -23,19 +23,19 @@ const ResultCard = ({ result, loading, t, language }) => {
   };
 
   const translateRecommendation = (rec, disease, severity) => {
-    if (language === 'en') return rec;
-    const d = disease.toLowerCase();
-    const s = severity.toLowerCase();
+    const d = (disease || '').toLowerCase();
+    const s = (severity || 'low').toLowerCase();
+    
     if (d.includes('healthy')) return t.recHealthy;
     if (d.includes('powdery')) {
-      if (s === 'low') return t.recPowderyLow;
+      if (s === 'high') return t.recPowderyHigh;
       if (s === 'medium') return t.recPowderyMed;
-      return t.recPowderyHigh;
+      return t.recPowderyLow;
     }
     if (d.includes('rust')) {
-      if (s === 'low') return t.recRustLow;
+      if (s === 'high') return t.recRustHigh;
       if (s === 'medium') return t.recRustMed;
-      return t.recRustHigh;
+      return t.recRustLow;
     }
     return rec;
   };
@@ -75,15 +75,20 @@ const ResultCard = ({ result, loading, t, language }) => {
         </div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2.5rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h3 style={{ fontSize: '3.5rem', fontWeight: 900, lineHeight: 1, marginBottom: '0.8rem', letterSpacing: '-0.05em' }}>
+          <h3 style={{ fontSize: '3rem', fontWeight: 900, lineHeight: 1.1, marginBottom: '0.8rem', letterSpacing: '-0.04em' }}>
             {translateDisease(result.disease)}
           </h3>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
             <span className="badge" style={{ background: `${sevInfo.color}20`, color: sevInfo.color }}>
               {t[result.severity?.toLowerCase()]?.toUpperCase()} {t.severityLabel.toUpperCase()}
             </span>
+            {result.is_offline && (
+              <span className="badge" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa' }}>
+                ⚡ {t.offlineMode.toUpperCase()}
+              </span>
+            )}
           </div>
         </div>
         
@@ -97,7 +102,7 @@ const ResultCard = ({ result, loading, t, language }) => {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2.5rem', marginBottom: '3rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2.5rem', marginBottom: '2.5rem' }}>
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', fontWeight: 800, marginBottom: '0.75rem' }}>
             <span style={{ color: 'var(--text-secondary)' }}>{t.predictionScore.toUpperCase()}</span>
@@ -119,12 +124,12 @@ const ResultCard = ({ result, loading, t, language }) => {
         </div>
       </div>
 
-      <div style={{ background: 'rgba(255,255,255,0.02)', padding: '2rem', borderRadius: '28px', border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', top: 0, left: 0, width: '6px', height: '100%', background: sevInfo.color }}></div>
-        <div style={{ display: 'flex', gap: '1rem', color: sevInfo.color, marginBottom: '1.25rem', fontWeight: 900, fontSize: '1rem', alignItems: 'center' }}>
-          <Zap size={22} fill={sevInfo.color} /> {t.recoveryProtocol.toUpperCase()}
+      <div style={{ background: 'rgba(255,255,255,0.02)', padding: '1.75rem', borderRadius: '24px', border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', top: 0, left: 0, width: '5px', height: '100%', background: sevInfo.color }}></div>
+        <div style={{ display: 'flex', gap: '0.75rem', color: sevInfo.color, marginBottom: '1rem', fontWeight: 900, fontSize: '0.95rem', alignItems: 'center' }}>
+          <Zap size={20} fill={sevInfo.color} /> {t.recoveryProtocol.toUpperCase()}
         </div>
-        <p style={{ fontSize: '1.25rem', lineHeight: 1.8, fontWeight: 500, color: 'var(--text-main)' }}>
+        <p style={{ fontSize: '1.15rem', lineHeight: 1.7, fontWeight: 500, color: 'var(--text-main)', margin: 0 }}>
           {translateRecommendation(result.recommendation || result.treatment, result.disease, result.severity)}
         </p>
       </div>

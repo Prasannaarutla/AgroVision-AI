@@ -5,5 +5,3 @@ Pillow
 opencv-python-headless
 ultralytics
 requests
-pi-heif
-pillow-avif-plugin
