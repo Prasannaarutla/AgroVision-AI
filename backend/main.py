@@ -519,6 +519,8 @@ async def predict(
             image = Image.open(io.BytesIO(image_data))
             # Auto-rotate based on EXIF tag to fix smartphone photo orientation
             image = ImageOps.exif_transpose(image).convert('RGB')
+            # Downscale large smartphone photos to max 800x800 to prevent OOM on 512MB RAM server
+            image.thumbnail((800, 800), Image.Resampling.LANCZOS)
         except Exception:
             return JSONResponse(
                 status_code=400,
@@ -534,12 +536,11 @@ async def predict(
         max_conf = 0.0
         annotated_img = None
         
-        # 1. Run Ultralytics YOLOv8 inference with 640px and sensitive threshold (conf=0.10)
+        # 1. Run Ultralytics YOLOv8 inference with 320px for fast, low-memory execution
         if yolo_model is not None:
             try:
                 with torch.no_grad():
-                    # imgsz=640 for better small-lesion detection accuracy
-                    results = yolo_model(image, imgsz=640, conf=0.10, verbose=False)
+                    results = yolo_model(image, imgsz=320, conf=0.10, verbose=False)
                 
                 if results and len(results) > 0:
                     res = results[0]

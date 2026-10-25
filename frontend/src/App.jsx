@@ -109,11 +109,21 @@ function App() {
         setAnnotatedImage(data.annotated_image);
       }
     } catch (err) {
-      console.error('Detection Error:', err);
-      if (err.name === 'AbortError') {
-        setError(t.serverWakingUp || 'Server is starting up. Please wait 30 seconds and try again.');
-      } else {
-        setError(err.message || t.analysisError);
+      console.warn('Online detection unavailable, running on-device diagnosis fallback:', err);
+      try {
+        const fallbackResult = await runOfflineDetection(selectedImage, language);
+        const localRemedies = getLocalizedHomeRemedies(fallbackResult.disease, language);
+        setResult({ ...fallbackResult, home_remedies: localRemedies });
+        if (fallbackResult.annotated_image) {
+          setAnnotatedImage(fallbackResult.annotated_image);
+        }
+      } catch (fallbackErr) {
+        console.error('All detection methods failed:', fallbackErr);
+        if (err.name === 'AbortError') {
+          setError(t.serverWakingUp || 'AI server is starting up. Please wait 30 seconds and try again.');
+        } else {
+          setError(err.message || t.analysisError);
+        }
       }
     } finally {
       setLoading(false);

@@ -80,16 +80,58 @@ const ImageUploader = ({ onImageSelect, selectedImage, annotatedImage, t }) => {
     }
   };
 
-  const handleFile = (file) => {
+  const compressImage = (file) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        img.onload = () => {
+          const maxDim = 1200;
+          let w = img.naturalWidth || img.width;
+          let h = img.naturalHeight || img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                const compressedFile = new File([blob], file.name ? file.name.replace(/\.[^/.]+$/, ".jpg") : "leaf.jpg", { type: "image/jpeg" });
+                const preview = canvas.toDataURL('image/jpeg', 0.85);
+                resolve({ file: compressedFile, preview });
+              } else {
+                resolve({ file, preview: e.target.result });
+              }
+            },
+            'image/jpeg',
+            0.85
+          );
+        };
+        img.onerror = () => resolve({ file, preview: e.target.result });
+        img.src = e.target.result;
+      };
+      reader.onerror = () => resolve({ file, preview: URL.createObjectURL(file) });
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleFile = async (file) => {
     if (!file.type.startsWith('image/')) {
       alert(t.selectImageAlert);
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      onImageSelect({ file, preview: e.target.result });
-    };
-    reader.readAsDataURL(file);
+    const compressed = await compressImage(file);
+    onImageSelect(compressed);
   };
 
   const onButtonClick = () => {
