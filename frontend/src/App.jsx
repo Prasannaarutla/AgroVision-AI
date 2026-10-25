@@ -139,8 +139,8 @@ function App() {
             <Languages size={19} style={{ color: 'var(--primary)' }} />
             <select value={language} onChange={(e) => setLanguage(e.target.value)} style={{ background: 'transparent', border: 'none', color: 'white', fontSize: '0.95rem', fontWeight: 800, outline: 'none', cursor: 'pointer' }}>
               <option value="en" style={{ background: '#020617' }}>English</option>
-              <option value="te" style={{ background: '#020617' }}>?????? (Telugu)</option>
-              <option value="hi" style={{ background: '#020617' }}>?????? (Hindi)</option>
+              <option value="te" style={{ background: '#020617' }}>తెలుగు (Telugu)</option>
+              <option value="hi" style={{ background: '#020617' }}>हिन्दी (Hindi)</option>
             </select>
           </div>
           {selectedImage && (
