@@ -93,41 +93,45 @@ function App() {
       return;
     }
 
+    let completed = false;
+
+    // 1. Try fast Cloud API (2.5s max timeout so UI never hangs)
     try {
       const formData = new FormData();
       formData.append('file', selectedImage.file);
       formData.append('lang', language);
-      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 65000);
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || t.analysisError);
+      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 2500);
+      if (response && response.ok) {
+        const data = await response.json();
+        if (data && data.disease) {
+          const localRemedies = getLocalizedHomeRemedies(data.disease, language);
+          setResult({ ...data, home_remedies: localRemedies });
+          if (data.annotated_image) {
+            setAnnotatedImage(data.annotated_image);
+          }
+          completed = true;
+        }
       }
-      const data = await response.json();
-      const localRemedies = getLocalizedHomeRemedies(data.disease, language);
-      setResult({ ...data, home_remedies: localRemedies });
-      if (data.annotated_image) {
-        setAnnotatedImage(data.annotated_image);
-      }
-    } catch (err) {
-      console.warn('Online detection unavailable, running on-device diagnosis fallback:', err);
+    } catch (apiErr) {
+      console.warn('Cloud API unavailable or timed out, executing instant on-device diagnosis:', apiErr);
+    }
+
+    // 2. If Cloud API was slow or failed, immediately run on-device computer vision AI
+    if (!completed) {
       try {
-        const fallbackResult = await runOfflineDetection(selectedImage, language);
-        const localRemedies = getLocalizedHomeRemedies(fallbackResult.disease, language);
-        setResult({ ...fallbackResult, home_remedies: localRemedies });
-        if (fallbackResult.annotated_image) {
-          setAnnotatedImage(fallbackResult.annotated_image);
+        const onDeviceResult = await runOfflineDetection(selectedImage, language);
+        const localRemedies = getLocalizedHomeRemedies(onDeviceResult.disease, language);
+        setResult({ ...onDeviceResult, home_remedies: localRemedies });
+        if (onDeviceResult.annotated_image) {
+          setAnnotatedImage(onDeviceResult.annotated_image);
         }
       } catch (fallbackErr) {
         console.error('All detection methods failed:', fallbackErr);
-        if (err.name === 'AbortError') {
-          setError(t.serverWakingUp || 'AI server is starting up. Please wait 30 seconds and try again.');
-        } else {
-          setError(err.message || t.analysisError);
-        }
+        setError(t.analysisError);
       }
-    } finally {
-      setLoading(false);
     }
+
+    setLoading(false);
   };
 
   return (
