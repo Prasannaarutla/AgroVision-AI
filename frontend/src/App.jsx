@@ -78,7 +78,7 @@ function App() {
 
     if (!navigator.onLine || isOffline) {
       try {
-        const offlineResult = await runOfflineDetection(selectedImage, language);
+        const offlineResult = await runOfflineDetection(selectedImage, language, true);
         const localRemedies = getLocalizedHomeRemedies(offlineResult.disease, language);
         setResult({ ...offlineResult, home_remedies: localRemedies });
         if (offlineResult.annotated_image) {
@@ -95,12 +95,12 @@ function App() {
 
     let completed = false;
 
-    // 1. Try fast Cloud API (2.5s max timeout so UI never hangs)
+    // 1. Try fast Cloud API (4s max timeout so UI never hangs)
     try {
       const formData = new FormData();
       formData.append('file', selectedImage.file);
       formData.append('lang', language);
-      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 2500);
+      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 4000);
       if (response && response.ok) {
         const data = await response.json();
         if (data && data.disease) {
@@ -119,7 +119,7 @@ function App() {
     // 2. If Cloud API was slow or failed, immediately run on-device computer vision AI
     if (!completed) {
       try {
-        const onDeviceResult = await runOfflineDetection(selectedImage, language);
+        const onDeviceResult = await runOfflineDetection(selectedImage, language, false);
         const localRemedies = getLocalizedHomeRemedies(onDeviceResult.disease, language);
         setResult({ ...onDeviceResult, home_remedies: localRemedies });
         if (onDeviceResult.annotated_image) {
