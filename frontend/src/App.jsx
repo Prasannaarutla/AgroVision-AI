@@ -157,7 +157,7 @@ function App() {
       {isOffline && (
         <div style={{ background: 'rgba(220,38,38,0.15)', color: '#fca5a5', padding: '0.65rem 1.25rem', textAlign: 'center', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.6rem', marginBottom: '2rem', borderRadius: '14px', border: '1px solid rgba(220,38,38,0.4)', boxShadow: '0 4px 20px rgba(220,38,38,0.15)', animation: 'slideDown 0.3s ease-out' }}>
           <WifiOff size={18} />
-          <span>{t.offlineBanner} — {t.offlineDetectNote || 'Offline AI detection active'}</span>
+          <span>{t.offlineBanner}  -  {t.offlineDetectNote || 'Offline AI detection active'}</span>
         </div>
       )}
 
