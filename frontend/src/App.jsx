@@ -95,12 +95,12 @@ function App() {
 
     let completed = false;
 
-    // 1. Try fast Cloud API (4s max timeout so UI never hangs)
+    // 1. Try Cloud API (45s timeout to allow YOLOv8 model inference & Render wake-up)
     try {
       const formData = new FormData();
       formData.append('file', selectedImage.file);
       formData.append('lang', language);
-      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 4000);
+      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 45000);
       if (response && response.ok) {
         const data = await response.json();
         if (data && data.disease) {

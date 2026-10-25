@@ -131,14 +131,14 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
               const b = data[idx + 2];
 
               // 1. Filter out background sky, pure white studio background, and harsh light
-              const isSkyOrWhite = (b >= r && b > 135) || (r > 240 && g > 240 && b > 240);
+              const isSkyOrWhite = (b >= r && b > 115) || (r > 225 && g > 225 && b > 225) || (b > 150 && b > g * 0.95);
               if (isSkyOrWhite) {
                 continue;
               }
 
               // 2. Identify leaf foliage (green chlorophyll, yellowish aging leaf, or diseased leaf blade)
-              const isGreenLeaf = (g > 38 && g > b * 0.95 && (g > r * 0.85 || (r > 50 && g > 45)));
-              const isYellowishLeaf = (r > 70 && g > 65 && b < 75 && (r + g) > b * 2.2);
+              const isGreenLeaf = (g > 38 && g > b * 1.05 && (g > r * 0.95 || (g > 60 && g > b * 1.2)));
+              const isYellowishLeaf = (r > 70 && g > 65 && b < 85 && (r + g) > b * 2.2);
 
               if (isGreenLeaf || isYellowishLeaf) {
                 foliagePixels++;
@@ -146,14 +146,12 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
 
               // 3. RUST DISEASE IDENTIFICATION:
               // Warm orange, fiery yellow-orange, or reddish-brown rust pustules on leaf blade
-              // Typical Rust: Red is high (>105), Red dominates Green (r > g * 1.08), Red crushes Blue (r > b * 1.6), Blue is low (<95)
               const isRustSpot = (
-                r > 105 && 
-                r > b * 1.55 && 
-                r > g * 1.08 && 
-                b < 95 && 
-                g > 35 && 
-                g < 165
+                r > 95 && 
+                r > b * 1.45 && 
+                r > g * 1.04 && 
+                b < 100 && 
+                g > 30
               );
 
               if (isRustSpot) {
@@ -164,16 +162,14 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
 
               // 4. POWDERY MILDEW IDENTIFICATION:
               // Pale chalky whitish/grayish-green fungal coating on the surface of green foliage.
-              // Crucial difference from sky: On leaf, Red and Green are BOTH high and higher than Blue (r > b * 1.06 && g > b * 1.06)
               const brightness = (r + g + b) / 3;
               const isPowderySpot = (
                 isGreenLeaf && 
-                brightness > 140 && 
-                r > 125 && 
-                g > 135 && 
-                r > b * 1.06 && 
-                g > b * 1.08 && 
-                Math.abs(r - g) < 40
+                brightness > 135 && 
+                r > 120 && 
+                g > 130 && 
+                (r + g) > b * 2.15 &&
+                Math.abs(r - g) < 32
               );
 
               if (isPowderySpot) {
