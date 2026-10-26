@@ -534,33 +534,50 @@ async def predict(
         np_img = np.array(image)
         h, w = np_img.shape[:2]
         
-        # 1. Comprehensive Leaf Foliage and Lesion Color Analysis (HSV)
+        # 1. Comprehensive Plant Foliage Canopy and Lesion Analysis
         hsv = cv2.cvtColor(np_img, cv2.COLOR_RGB2HSV)
-        # Foliage masks: green, yellow-green, and diseased leaf tissues
-        mask_green = cv2.inRange(hsv, (26, 25, 25), (92, 255, 255))
+        
+        # Isolate green chlorophyll and yellow-green chlorotic leaf foliage
+        mask_green = cv2.inRange(hsv, (26, 25, 25), (95, 255, 255))
         mask_yellow_green = cv2.inRange(hsv, (18, 25, 25), (32, 255, 255))
-        mask_rust_spots = cv2.inRange(hsv, (6, 50, 30), (22, 255, 240))
+        green_foliage = cv2.bitwise_or(mask_green, mask_yellow_green)
         
-        foliage_mask = cv2.bitwise_or(mask_green, cv2.bitwise_or(mask_yellow_green, mask_rust_spots))
-        foliage_mask = cv2.morphologyEx(foliage_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
-        
+        # Dilate green foliage slightly to establish leaf blade canopy boundary.
+        # This bridges lesions inside the leaf while strictly rejecting isolated ground soil, mulch, pots, and sky.
+        leaf_bridge = cv2.dilate(green_foliage, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (45, 45)))
+
+        # Powdery Mildew: Chalky pale / whitish fungal dusting on the leaf canopy
+        # High brightness (115-245), low saturation (0-72), confined to the leaf canopy
+        mask_pale = cv2.inRange(hsv, (0, 0, 115), (180, 72, 245))
+        powdery_on_leaf = cv2.bitwise_and(mask_pale, mask_pale, mask=leaf_bridge)
+        powdery_on_leaf = cv2.morphologyEx(powdery_on_leaf, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+        powdery_pixels = int(np.sum(powdery_on_leaf > 0))
+
+        # Rust Lesions: Fiery orange / amber fungal pustules on the leaf canopy
+        # Hue [8, 24], rich saturation S >= 95, bright fiery orange V >= 100
+        # Confined to leaf canopy to completely eliminate false triggers on dull brown soil / dirt
+        mask_rust_color = cv2.inRange(hsv, (8, 95, 100), (24, 255, 245))
+        rust_on_leaf_raw = cv2.bitwise_and(mask_rust_color, mask_rust_color, mask=leaf_bridge)
+        rust_on_leaf_raw = cv2.morphologyEx(rust_on_leaf_raw, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+
+        # Discard any excessively large continuous contour (>1500 px) which would be wood/soil/bark
+        num_r, r_labels, r_stats, _ = cv2.connectedComponentsWithStats(rust_on_leaf_raw)
+        rust_on_leaf = np.zeros_like(rust_on_leaf_raw)
+        for i in range(1, num_r):
+            area = r_stats[i, cv2.CC_STAT_AREA]
+            if 15 <= area <= 1500:
+                rust_on_leaf[r_labels == i] = 255
+        rust_pixels = int(np.sum(rust_on_leaf > 0))
+
+        # Full plant canopy (green foliage + any disease spots on plant)
+        foliage_mask = cv2.bitwise_or(green_foliage, cv2.bitwise_or(powdery_on_leaf, rust_on_leaf))
         leaf_pixels = int(np.sum(foliage_mask > 0))
         green_pixels = int(np.sum(mask_green > 0))
         total_pixels = h * w
         foliage_coverage = (leaf_pixels / float(total_pixels)) if total_pixels > 0 else 0.0
         green_dominance = (green_pixels / float(leaf_pixels)) if leaf_pixels > 0 else 0.0
 
-        # Rust Lesion Analysis: Orange / reddish-brown fungal pustules on foliage
-        rust_on_leaf = cv2.bitwise_and(mask_rust_spots, mask_rust_spots, mask=foliage_mask)
-        rust_on_leaf = cv2.morphologyEx(rust_on_leaf, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-        rust_pixels = int(np.sum(rust_on_leaf > 0))
         rust_ratio = (rust_pixels / float(leaf_pixels)) if leaf_pixels > 0 else 0.0
-
-        # Powdery Mildew Analysis: Chalky whitish / pale fungal growth on foliage
-        powdery_mask = cv2.inRange(hsv, (20, 0, 150), (110, 55, 255))
-        powdery_on_leaf = cv2.bitwise_and(powdery_mask, powdery_mask, mask=foliage_mask)
-        powdery_on_leaf = cv2.morphologyEx(powdery_on_leaf, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-        powdery_pixels = int(np.sum(powdery_on_leaf > 0))
         powdery_ratio = (powdery_pixels / float(leaf_pixels)) if leaf_pixels > 0 else 0.0
 
         # 2. Run Ultralytics YOLOv8 inference with standard threshold (conf=0.25)
@@ -597,21 +614,18 @@ async def predict(
         max_powdery_conf = max([b["conf"] for b in yolo_powdery_boxes], default=0.0)
 
         # 3. Multi-Layer Cross-Validation & Decision Engine
-        # Prevents low-confidence false positives on healthy green leaves
+        # Prevents low-confidence false positives on healthy green leaves and separates powdery vs rust
         rust_confirmed = False
         rust_conf = 0.0
         if max_rust_conf >= 0.65:
-            # Strong YOLO detection
             rust_confirmed = True
             rust_conf = max_rust_conf
-        elif max_rust_conf >= 0.40 and (rust_ratio >= 0.005 or rust_pixels >= 80):
-            # Moderate YOLO detection verified by real rust pustule coloration
+        elif max_rust_conf >= 0.40 and (rust_ratio >= 0.005 or rust_pixels >= 60):
             rust_confirmed = True
             rust_conf = max_rust_conf
-        elif rust_ratio >= 0.012 or (rust_pixels >= 180 and rust_ratio >= 0.006):
-            # Visual analysis confirms significant rust pustule spread
+        elif rust_ratio >= 0.010 or (rust_pixels >= 150 and rust_ratio >= 0.005):
             rust_confirmed = True
-            rust_conf = min(0.95, max(0.72, 0.65 + float(rust_ratio) * 6.0))
+            rust_conf = min(0.95, max(0.72, 0.68 + float(rust_ratio) * 6.0))
 
         powdery_confirmed = False
         powdery_conf = 0.0
@@ -621,31 +635,37 @@ async def predict(
         elif max_powdery_conf >= 0.40 and (powdery_ratio >= 0.008 or powdery_pixels >= 80):
             powdery_confirmed = True
             powdery_conf = max_powdery_conf
-        elif powdery_ratio >= 0.015 or (powdery_pixels >= 250 and powdery_ratio >= 0.008):
+        elif powdery_ratio >= 0.012 or (powdery_pixels >= 200 and powdery_ratio >= 0.006):
             powdery_confirmed = True
-            powdery_conf = min(0.94, max(0.70, 0.62 + float(powdery_ratio) * 5.0))
+            powdery_conf = min(0.95, max(0.74, 0.70 + float(powdery_ratio) * 4.5))
 
         # Check for false-positive suppressions on clean green foliage
-        if green_dominance >= 0.65 and rust_ratio < 0.004 and max_rust_conf < 0.65:
+        if green_dominance >= 0.68 and rust_ratio < 0.004 and max_rust_conf < 0.65:
             rust_confirmed = False
 
-        if green_dominance >= 0.65 and powdery_ratio < 0.005 and max_powdery_conf < 0.65:
+        if green_dominance >= 0.68 and powdery_ratio < 0.005 and max_powdery_conf < 0.65:
             powdery_confirmed = False
 
         # Final decision
         if rust_confirmed and powdery_confirmed:
-            if rust_conf >= powdery_conf:
-                best_class = "RUST"
-                final_conf = rust_conf
-            else:
+            if powdery_pixels >= rust_pixels * 1.3 or powdery_ratio >= rust_ratio * 1.3:
                 best_class = "POWDERY"
                 final_conf = powdery_conf
-        elif rust_confirmed:
-            best_class = "RUST"
-            final_conf = rust_conf
+            elif rust_pixels >= powdery_pixels * 1.3 or rust_ratio >= powdery_ratio * 1.3:
+                best_class = "RUST"
+                final_conf = rust_conf
+            elif powdery_conf >= rust_conf:
+                best_class = "POWDERY"
+                final_conf = powdery_conf
+            else:
+                best_class = "RUST"
+                final_conf = rust_conf
         elif powdery_confirmed:
             best_class = "POWDERY"
             final_conf = powdery_conf
+        elif rust_confirmed:
+            best_class = "RUST"
+            final_conf = rust_conf
         else:
             best_class = "HEALTHY"
             final_conf = max(max_healthy_conf, 0.92 if green_dominance > 0.60 else 0.88)
@@ -689,13 +709,13 @@ async def predict(
             if boxes_drawn == 0 and rust_pixels > 0:
                 cnts, _ = cv2.findContours(rust_on_leaf, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 for cnt in cnts:
-                    if cv2.contourArea(cnt) > 25:
+                    if 25 < cv2.contourArea(cnt) < 1500:
                         bx, by, bw, bh = cv2.boundingRect(cnt)
                         cv2.rectangle(ann_bgr, (bx, by), (bx + bw, by + bh), rust_color, 2)
-                cv2.putText(ann_bgr, f"RUST ({int(final_conf*100)}%)", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.85, rust_color, 2, cv2.LINE_AA)
+                cv2.putText(ann_bgr, f"LEAF RUST ({int(final_conf*100)}%)", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.85, rust_color, 2, cv2.LINE_AA)
 
         elif best_class == "POWDERY":
-            powdery_color = (255, 220, 50) # BGR cyan/yellow
+            powdery_color = (255, 200, 50) # BGR cyan/blue
             boxes_drawn = 0
             for pb in yolo_powdery_boxes:
                 if pb["conf"] >= 0.40:
@@ -707,10 +727,10 @@ async def predict(
             if boxes_drawn == 0 and powdery_pixels > 0:
                 cnts, _ = cv2.findContours(powdery_on_leaf, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 for cnt in cnts:
-                    if cv2.contourArea(cnt) > 30:
+                    if cv2.contourArea(cnt) > 35:
                         bx, by, bw, bh = cv2.boundingRect(cnt)
                         cv2.rectangle(ann_bgr, (bx, by), (bx + bw, by + bh), powdery_color, 2)
-                cv2.putText(ann_bgr, f"POWDERY ({int(final_conf*100)}%)", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.85, powdery_color, 2, cv2.LINE_AA)
+                cv2.putText(ann_bgr, f"POWDERY MILDEW ({int(final_conf*100)}%)", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.85, powdery_color, 2, cv2.LINE_AA)
 
         annotated_img = Image.fromarray(cv2.cvtColor(ann_bgr, cv2.COLOR_BGR2RGB))
 

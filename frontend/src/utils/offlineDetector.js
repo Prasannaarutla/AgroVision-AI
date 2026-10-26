@@ -130,30 +130,38 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
               const g = data[idx + 1];
               const b = data[idx + 2];
 
-              // 1. Filter out background sky, pure white studio background, and harsh light
-              const isSkyOrWhite = (b >= r && b > 115) || (r > 225 && g > 225 && b > 225) || (b > 150 && b > g * 0.95);
+              // 1. Filter out background blue sky, pure white studio overexposure, and harsh glare
+              const isSkyOrWhite = (b > 130 && b > r * 1.25 && b > g * 1.05) || (r > 245 && g > 245 && b > 245);
               if (isSkyOrWhite) {
                 continue;
               }
 
-              // 2. Identify leaf foliage (green chlorophyll, yellowish aging leaf, or diseased leaf blade)
-              const isGreenLeaf = (g > 38 && g > b * 1.05 && (g > r * 0.95 || (g > 60 && g > b * 1.2)));
-              const isYellowishLeaf = (r > 70 && g > 65 && b < 85 && (r + g) > b * 2.2);
+              // 2. Filter out dull brown soil / dirt / dry mulch (not fungal pustules)
+              const brightness = (r + g + b) / 3;
+              const isDullSoil = (r < 135 && g < 100 && b < 80 && brightness < 95);
+              if (isDullSoil) {
+                continue;
+              }
+
+              // 3. Identify leaf foliage (green chlorophyll, yellowish aging leaf, or diseased leaf blade)
+              const isGreenLeaf = (g > 35 && g > b * 1.05 && (g > r * 0.92 || (g > 55 && g > b * 1.15)));
+              const isYellowishLeaf = (r > 65 && g > 60 && b < 85 && (r + g) > b * 2.0);
 
               if (isGreenLeaf || isYellowishLeaf) {
                 foliagePixels++;
               }
 
-              // 3. RUST DISEASE IDENTIFICATION:
-              // Warm fiery orange or reddish-brown rust pustules on leaf blade
-              // Rust has strong red elevation over green (r > g * 1.10) and blue (r > b * 1.55)
+              // 4. RUST DISEASE IDENTIFICATION:
+              // Warm fiery orange or reddish-amber rust pustules on leaf blade
+              // True rust pustules are vivid fiery orange (r >= 140, r - g >= 30, r > b * 1.75), distinctly different from dull soil
               const isRustSpot = (
-                r > 105 && 
-                r > b * 1.55 && 
-                r > g * 1.10 && 
-                b < 95 && 
-                g > 35 &&
-                g < 170
+                r >= 140 && 
+                r > b * 1.75 && 
+                r > g * 1.22 && 
+                (r - g) >= 30 &&
+                b < 85 && 
+                g >= 35 &&
+                g <= 150
               );
 
               if (isRustSpot) {
@@ -162,16 +170,16 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
                 continue;
               }
 
-              // 4. POWDERY MILDEW IDENTIFICATION:
+              // 5. POWDERY MILDEW IDENTIFICATION:
               // Pale chalky whitish/grayish fungal coating on foliage.
-              const brightness = (r + g + b) / 3;
+              const colorDelta = Math.max(r, g, b) - Math.min(r, g, b);
               const isPowderySpot = (
-                (isGreenLeaf || brightness > 125) && 
-                brightness > 130 && 
-                r > 110 && 
-                g > 120 && 
-                (r + g) > b * 2.0 &&
-                Math.abs(r - g) < 35
+                brightness >= 118 && 
+                brightness <= 240 && 
+                colorDelta <= 55 &&
+                r >= 85 && 
+                g >= 90 && 
+                b >= 80
               );
 
               if (isPowderySpot) {
@@ -181,7 +189,7 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
             }
           }
 
-          const effectiveLeaf = Math.max(foliagePixels, 100);
+          const effectiveLeaf = Math.max(foliagePixels + powderyPixels, 100);
           const rustRatio = rustPixels / effectiveLeaf;
           const powderyRatio = powderyPixels / effectiveLeaf;
 
@@ -191,11 +199,11 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
           let isDetected = false;
 
           // EVALUATE DISEASE BASED ON ACTUAL LESION EVIDENCE & RELATIVE DOMINANCE
-          let hasRust = (rustRatio > 0.012 || (rustPixels >= 140 && rustRatio > 0.006));
-          let hasPowdery = (powderyRatio > 0.015 || (powderyPixels >= 140 && powderyRatio > 0.007));
+          let hasRust = (rustRatio > 0.010 || (rustPixels >= 120 && rustRatio > 0.005));
+          let hasPowdery = (powderyRatio > 0.012 || (powderyPixels >= 150 && powderyRatio > 0.006));
 
           // Suppress false positive rust/powdery on predominantly healthy green leaves
-          if (foliagePixels > 250 && rustRatio < 0.005) {
+          if (foliagePixels > 250 && rustRatio < 0.004) {
             hasRust = false;
           }
           if (foliagePixels > 250 && powderyRatio < 0.005) {
@@ -207,9 +215,9 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
 
           if (hasRust && hasPowdery) {
             // Both detected - choose whichever has significantly stronger visual evidence
-            if (powderyPixels >= rustPixels * 1.25 || powderyRatio >= rustRatio * 1.25) {
+            if (powderyPixels >= rustPixels * 1.2 || powderyRatio >= rustRatio * 1.2) {
               isPowdery = true;
-            } else if (rustPixels >= powderyPixels * 1.25 || rustRatio >= powderyRatio * 1.25) {
+            } else if (rustPixels >= powderyPixels * 1.2 || rustRatio >= powderyRatio * 1.2) {
               isRust = true;
             } else {
               // Whichever has higher lesion pixel count
