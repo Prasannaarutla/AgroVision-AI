@@ -534,113 +534,185 @@ async def predict(
         np_img = np.array(image)
         h, w = np_img.shape[:2]
         
-        yolo_model = get_model()
-        best_class = None
-        max_conf = 0.0
-        annotated_img = None
+        # 1. Comprehensive Leaf Foliage and Lesion Color Analysis (HSV)
+        hsv = cv2.cvtColor(np_img, cv2.COLOR_RGB2HSV)
+        # Foliage masks: green, yellow-green, and diseased leaf tissues
+        mask_green = cv2.inRange(hsv, (26, 25, 25), (92, 255, 255))
+        mask_yellow_green = cv2.inRange(hsv, (18, 25, 25), (32, 255, 255))
+        mask_rust_spots = cv2.inRange(hsv, (6, 50, 30), (22, 255, 240))
         
-        # 1. Run Ultralytics YOLOv8 inference with 320px for fast, low-memory execution
+        foliage_mask = cv2.bitwise_or(mask_green, cv2.bitwise_or(mask_yellow_green, mask_rust_spots))
+        foliage_mask = cv2.morphologyEx(foliage_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+        
+        leaf_pixels = int(np.sum(foliage_mask > 0))
+        green_pixels = int(np.sum(mask_green > 0))
+        total_pixels = h * w
+        foliage_coverage = (leaf_pixels / float(total_pixels)) if total_pixels > 0 else 0.0
+        green_dominance = (green_pixels / float(leaf_pixels)) if leaf_pixels > 0 else 0.0
+
+        # Rust Lesion Analysis: Orange / reddish-brown fungal pustules on foliage
+        rust_on_leaf = cv2.bitwise_and(mask_rust_spots, mask_rust_spots, mask=foliage_mask)
+        rust_on_leaf = cv2.morphologyEx(rust_on_leaf, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+        rust_pixels = int(np.sum(rust_on_leaf > 0))
+        rust_ratio = (rust_pixels / float(leaf_pixels)) if leaf_pixels > 0 else 0.0
+
+        # Powdery Mildew Analysis: Chalky whitish / pale fungal growth on foliage
+        powdery_mask = cv2.inRange(hsv, (20, 0, 150), (110, 55, 255))
+        powdery_on_leaf = cv2.bitwise_and(powdery_mask, powdery_mask, mask=foliage_mask)
+        powdery_on_leaf = cv2.morphologyEx(powdery_on_leaf, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+        powdery_pixels = int(np.sum(powdery_on_leaf > 0))
+        powdery_ratio = (powdery_pixels / float(leaf_pixels)) if leaf_pixels > 0 else 0.0
+
+        # 2. Run Ultralytics YOLOv8 inference with standard threshold (conf=0.25)
+        yolo_model = get_model()
+        yolo_healthy_boxes = []
+        yolo_rust_boxes = []
+        yolo_powdery_boxes = []
+        
         if yolo_model is not None:
             try:
                 with torch.no_grad():
-                    results = yolo_model(image, imgsz=320, conf=0.10, verbose=False)
+                    # imgsz=416 gives higher resolution accuracy without OOM risk
+                    results = yolo_model(image, imgsz=416, conf=0.25, verbose=False)
                 
-                if results and len(results) > 0:
-                    res = results[0]
-                    if res.boxes and len(res.boxes) > 0:
-                        disease_found = False
-                        # Prioritize disease boxes over healthy boxes
-                        for box in res.boxes:
-                            cls_id = int(box.cls[0])
-                            cls_name = yolo_model.names[cls_id]
-                            c = float(box.conf[0])
-                            
-                            if cls_name.upper() in ["POWDERY", "RUST"]:
-                                disease_found = True
-                                if best_class is None or best_class.upper() == "HEALTHY" or c > max_conf:
-                                    best_class = cls_name
-                                    max_conf = c
-                            elif not disease_found:
-                                if c > max_conf:
-                                    best_class = cls_name
-                                    max_conf = c
+                if results and len(results) > 0 and results[0].boxes:
+                    for box in results[0].boxes:
+                        cls_id = int(box.cls[0])
+                        cls_name = str(yolo_model.names.get(cls_id, "")).upper()
+                        c = float(box.conf[0])
+                        xyxy = [int(v) for v in box.xyxy[0].cpu().numpy()]
+                        box_data = {"conf": c, "xyxy": xyxy}
                         
-                        # Generate annotated image with bounding boxes
-                        annotated_array = res.plot()
-                        annotated_img = Image.fromarray(annotated_array[..., ::-1])
+                        if "HEALTHY" in cls_name:
+                            yolo_healthy_boxes.append(box_data)
+                        elif "RUST" in cls_name:
+                            yolo_rust_boxes.append(box_data)
+                        elif "POWDERY" in cls_name:
+                            yolo_powdery_boxes.append(box_data)
             except Exception as yolo_err:
                 print(f"YOLO inference error: {yolo_err}")
 
-        # 2. Intelligent Visual Fallback if YOLO produced no boxes or low confidence
-        if best_class is None or (best_class.upper() == "HEALTHY" and max_conf < 0.50):
-            try:
-                hsv = cv2.cvtColor(np_img, cv2.COLOR_RGB2HSV)
-                
-                # Leaf region segmentation
-                mask_green = cv2.inRange(hsv, (25, 25, 20), (95, 255, 255))
-                mask_yellow_brown = cv2.inRange(hsv, (10, 30, 30), (25, 255, 255))
-                leaf_mask = cv2.bitwise_or(mask_green, mask_yellow_brown)
-                leaf_pixels = np.sum(leaf_mask > 0)
-                
-                # If image has sufficient leaf foliage
-                if leaf_pixels > 0.04 * (h * w):
-                    # Check for Rust pustules (orange/red-brown in HSV)
-                    rust_mask = cv2.inRange(hsv, (8, 70, 50), (22, 255, 255))
-                    rust_on_leaf = cv2.bitwise_and(rust_mask, rust_mask, mask=leaf_mask)
-                    rust_on_leaf = cv2.morphologyEx(rust_on_leaf, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-                    rust_pixels = np.sum(rust_on_leaf > 0)
-                    rust_ratio = rust_pixels / float(leaf_pixels)
-                    
-                    # Check for Powdery Mildew (white/chalky fungal patches)
-                    powdery_mask = cv2.inRange(hsv, (20, 0, 160), (110, 50, 255))
-                    powdery_on_leaf = cv2.bitwise_and(powdery_mask, powdery_mask, mask=leaf_mask)
-                    powdery_on_leaf = cv2.morphologyEx(powdery_on_leaf, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
-                    powdery_pixels = np.sum(powdery_on_leaf > 0)
-                    powdery_ratio = powdery_pixels / float(leaf_pixels)
+        max_healthy_conf = max([b["conf"] for b in yolo_healthy_boxes], default=0.0)
+        max_rust_conf = max([b["conf"] for b in yolo_rust_boxes], default=0.0)
+        max_powdery_conf = max([b["conf"] for b in yolo_powdery_boxes], default=0.0)
 
-                    if rust_ratio > 0.012 or (rust_pixels > 200 and rust_ratio > 0.006):
-                        best_class = "RUST"
-                        max_conf = min(0.95, max(0.72, 0.65 + float(rust_ratio) * 6.0))
-                        
-                        ann_bgr = cv2.cvtColor(np_img, cv2.COLOR_RGB2BGR)
-                        cnts, _ = cv2.findContours(rust_on_leaf, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                        for cnt in cnts:
-                            if cv2.contourArea(cnt) > 25:
-                                bx, by, bw, bh = cv2.boundingRect(cnt)
-                                cv2.rectangle(ann_bgr, (bx, by), (bx + bw, by + bh), (0, 140, 255), 2)
-                        cv2.putText(ann_bgr, f"RUST ({int(max_conf*100)}%)", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 140, 255), 3)
-                        annotated_img = Image.fromarray(cv2.cvtColor(ann_bgr, cv2.COLOR_BGR2RGB))
-                        
-                    elif powdery_ratio > 0.015 or (powdery_pixels > 300 and powdery_ratio > 0.008):
-                        best_class = "POWDERY"
-                        max_conf = min(0.94, max(0.70, 0.62 + float(powdery_ratio) * 5.0))
-                        
-                        ann_bgr = cv2.cvtColor(np_img, cv2.COLOR_RGB2BGR)
-                        cnts, _ = cv2.findContours(powdery_on_leaf, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                        for cnt in cnts:
-                            if cv2.contourArea(cnt) > 30:
-                                bx, by, bw, bh = cv2.boundingRect(cnt)
-                                cv2.rectangle(ann_bgr, (bx, by), (bx + bw, by + bh), (255, 255, 0), 2)
-                        cv2.putText(ann_bgr, f"POWDERY ({int(max_conf*100)}%)", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 3)
-                        annotated_img = Image.fromarray(cv2.cvtColor(ann_bgr, cv2.COLOR_BGR2RGB))
-                    else:
-                        best_class = "HEALTHY"
-                        max_conf = 0.91
+        # 3. Multi-Layer Cross-Validation & Decision Engine
+        # Prevents low-confidence false positives on healthy green leaves
+        rust_confirmed = False
+        rust_conf = 0.0
+        if max_rust_conf >= 0.65:
+            # Strong YOLO detection
+            rust_confirmed = True
+            rust_conf = max_rust_conf
+        elif max_rust_conf >= 0.40 and (rust_ratio >= 0.005 or rust_pixels >= 80):
+            # Moderate YOLO detection verified by real rust pustule coloration
+            rust_confirmed = True
+            rust_conf = max_rust_conf
+        elif rust_ratio >= 0.012 or (rust_pixels >= 180 and rust_ratio >= 0.006):
+            # Visual analysis confirms significant rust pustule spread
+            rust_confirmed = True
+            rust_conf = min(0.95, max(0.72, 0.65 + float(rust_ratio) * 6.0))
+
+        powdery_confirmed = False
+        powdery_conf = 0.0
+        if max_powdery_conf >= 0.65:
+            powdery_confirmed = True
+            powdery_conf = max_powdery_conf
+        elif max_powdery_conf >= 0.40 and (powdery_ratio >= 0.008 or powdery_pixels >= 80):
+            powdery_confirmed = True
+            powdery_conf = max_powdery_conf
+        elif powdery_ratio >= 0.015 or (powdery_pixels >= 250 and powdery_ratio >= 0.008):
+            powdery_confirmed = True
+            powdery_conf = min(0.94, max(0.70, 0.62 + float(powdery_ratio) * 5.0))
+
+        # Check for false-positive suppressions on clean green foliage
+        if green_dominance >= 0.65 and rust_ratio < 0.004 and max_rust_conf < 0.65:
+            rust_confirmed = False
+
+        if green_dominance >= 0.65 and powdery_ratio < 0.005 and max_powdery_conf < 0.65:
+            powdery_confirmed = False
+
+        # Final decision
+        if rust_confirmed and powdery_confirmed:
+            if rust_conf >= powdery_conf:
+                best_class = "RUST"
+                final_conf = rust_conf
+            else:
+                best_class = "POWDERY"
+                final_conf = powdery_conf
+        elif rust_confirmed:
+            best_class = "RUST"
+            final_conf = rust_conf
+        elif powdery_confirmed:
+            best_class = "POWDERY"
+            final_conf = powdery_conf
+        else:
+            best_class = "HEALTHY"
+            final_conf = max(max_healthy_conf, 0.92 if green_dominance > 0.60 else 0.88)
+
+        # 4. Generate Clean Diagnostic Bounding Boxes & Annotations
+        ann_bgr = cv2.cvtColor(np_img, cv2.COLOR_RGB2BGR)
+
+        if best_class == "HEALTHY":
+            green_color = (34, 197, 94) # BGR emerald green
+            boxes_drawn = 0
+            if yolo_healthy_boxes:
+                for hb in yolo_healthy_boxes:
+                    if hb["conf"] >= 0.30:
+                        x1, y1, x2, y2 = hb["xyxy"]
+                        cv2.rectangle(ann_bgr, (x1, y1), (x2, y2), green_color, 2)
+                        cv2.putText(ann_bgr, f"HEALTHY ({int(hb['conf']*100)}%)", (x1, max(25, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.65, green_color, 2, cv2.LINE_AA)
+                        boxes_drawn += 1
+
+            if boxes_drawn == 0:
+                cnts, _ = cv2.findContours(foliage_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cnts = [c for c in cnts if cv2.contourArea(c) > 600]
+                if cnts:
+                    for cnt in sorted(cnts, key=cv2.contourArea, reverse=True)[:3]:
+                        bx, by, bw, bh = cv2.boundingRect(cnt)
+                        cv2.rectangle(ann_bgr, (bx, by), (bx + bw, by + bh), green_color, 2)
+                        cv2.putText(ann_bgr, f"HEALTHY ({int(final_conf*100)}%)", (bx, max(22, by - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.65, green_color, 2, cv2.LINE_AA)
                 else:
-                    best_class = "HEALTHY"
-                    max_conf = 0.88
-            except Exception as cv_err:
-                print(f"Visual analysis error: {cv_err}")
-                best_class = "HEALTHY"
-                max_conf = 0.85
+                    cv2.rectangle(ann_bgr, (15, 15), (w - 15, h - 15), green_color, 2)
+                    cv2.putText(ann_bgr, f"HEALTHY LEAF ({int(final_conf*100)}%)", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.85, green_color, 2, cv2.LINE_AA)
 
-        # Fallback if no annotation was created
-        if annotated_img is None:
-            ann_bgr = cv2.cvtColor(np_img, cv2.COLOR_RGB2BGR)
-            label = best_class if best_class else "HEALTHY"
-            color = (34, 197, 94) if label.upper() == "HEALTHY" else (0, 140, 255)
-            cv2.putText(ann_bgr, f"{label} ({int(max_conf*100)}%)", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 3)
-            annotated_img = Image.fromarray(cv2.cvtColor(ann_bgr, cv2.COLOR_BGR2RGB))
+        elif best_class == "RUST":
+            rust_color = (0, 140, 255) # BGR amber/orange
+            boxes_drawn = 0
+            for rb in yolo_rust_boxes:
+                if rb["conf"] >= 0.40:
+                    x1, y1, x2, y2 = rb["xyxy"]
+                    cv2.rectangle(ann_bgr, (x1, y1), (x2, y2), rust_color, 2)
+                    cv2.putText(ann_bgr, f"RUST ({int(rb['conf']*100)}%)", (x1, max(25, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.65, rust_color, 2, cv2.LINE_AA)
+                    boxes_drawn += 1
+
+            if boxes_drawn == 0 and rust_pixels > 0:
+                cnts, _ = cv2.findContours(rust_on_leaf, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for cnt in cnts:
+                    if cv2.contourArea(cnt) > 25:
+                        bx, by, bw, bh = cv2.boundingRect(cnt)
+                        cv2.rectangle(ann_bgr, (bx, by), (bx + bw, by + bh), rust_color, 2)
+                cv2.putText(ann_bgr, f"RUST ({int(final_conf*100)}%)", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.85, rust_color, 2, cv2.LINE_AA)
+
+        elif best_class == "POWDERY":
+            powdery_color = (255, 220, 50) # BGR cyan/yellow
+            boxes_drawn = 0
+            for pb in yolo_powdery_boxes:
+                if pb["conf"] >= 0.40:
+                    x1, y1, x2, y2 = pb["xyxy"]
+                    cv2.rectangle(ann_bgr, (x1, y1), (x2, y2), powdery_color, 2)
+                    cv2.putText(ann_bgr, f"POWDERY ({int(pb['conf']*100)}%)", (x1, max(25, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.65, powdery_color, 2, cv2.LINE_AA)
+                    boxes_drawn += 1
+
+            if boxes_drawn == 0 and powdery_pixels > 0:
+                cnts, _ = cv2.findContours(powdery_on_leaf, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for cnt in cnts:
+                    if cv2.contourArea(cnt) > 30:
+                        bx, by, bw, bh = cv2.boundingRect(cnt)
+                        cv2.rectangle(ann_bgr, (bx, by), (bx + bw, by + bh), powdery_color, 2)
+                cv2.putText(ann_bgr, f"POWDERY ({int(final_conf*100)}%)", (25, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.85, powdery_color, 2, cv2.LINE_AA)
+
+        annotated_img = Image.fromarray(cv2.cvtColor(ann_bgr, cv2.COLOR_BGR2RGB))
 
         # Base64 encode annotated image
         buffered = io.BytesIO()
@@ -652,7 +724,7 @@ async def predict(
         is_detected = d_upper in ["RUST", "POWDERY"]
         
         if is_detected:
-            severity = "High" if max_conf > 0.82 else "Medium" if max_conf > 0.55 else "Low"
+            severity = "High" if final_conf > 0.82 else "Medium" if final_conf > 0.55 else "Low"
         else:
             severity = "Low"
 
@@ -685,7 +757,7 @@ async def predict(
             content={
                 "disease": d_upper,
                 "disease_name": disease_name,
-                "confidence": float(round(max_conf, 3)),
+                "confidence": float(round(final_conf, 3)),
                 "severity": severity,
                 "treatment": treatment,
                 "recommendation": treatment,

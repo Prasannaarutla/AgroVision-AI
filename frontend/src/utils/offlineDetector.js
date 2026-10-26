@@ -191,8 +191,16 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
           let isDetected = false;
 
           // EVALUATE DISEASE BASED ON ACTUAL LESION EVIDENCE & RELATIVE DOMINANCE
-          const hasRust = (rustRatio > 0.010 || rustPixels >= 70);
-          const hasPowdery = (powderyRatio > 0.012 || powderyPixels >= 70);
+          let hasRust = (rustRatio > 0.012 || (rustPixels >= 140 && rustRatio > 0.006));
+          let hasPowdery = (powderyRatio > 0.015 || (powderyPixels >= 140 && powderyRatio > 0.007));
+
+          // Suppress false positive rust/powdery on predominantly healthy green leaves
+          if (foliagePixels > 250 && rustRatio < 0.005) {
+            hasRust = false;
+          }
+          if (foliagePixels > 250 && powderyRatio < 0.005) {
+            hasPowdery = false;
+          }
 
           let isRust = false;
           let isPowdery = false;
