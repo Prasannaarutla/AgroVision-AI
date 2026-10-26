@@ -96,7 +96,7 @@ function App() {
 
     let completed = false;
 
-    // 1. Try Cloud API (80s timeout to allow YOLOv8 model inference & Render wake-up)
+    // 1. Direct Model Prediction via Backend API (Trained YOLOv8 best.pt)
     try {
       const formData = new FormData();
       formData.append('file', selectedImage.file);
@@ -110,26 +110,16 @@ function App() {
           if (data.annotated_image) {
             setAnnotatedImage(data.annotated_image);
           }
-          completed = true;
+        } else {
+          setError(t.analysisError);
         }
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        setError(errData.detail || t.analysisError);
       }
     } catch (apiErr) {
-      console.warn('Cloud API unavailable or timed out, executing instant on-device diagnosis:', apiErr);
-    }
-
-    // 2. If Cloud API was slow or failed, immediately run on-device computer vision AI
-    if (!completed) {
-      try {
-        const onDeviceResult = await runOfflineDetection(selectedImage, language, false);
-        const localRemedies = getLocalizedHomeRemedies(onDeviceResult.disease, language);
-        setResult({ ...onDeviceResult, home_remedies: localRemedies });
-        if (onDeviceResult.annotated_image) {
-          setAnnotatedImage(onDeviceResult.annotated_image);
-        }
-      } catch (fallbackErr) {
-        console.error('All detection methods failed:', fallbackErr);
-        setError(t.analysisError);
-      }
+      console.error('Model API connection error:', apiErr);
+      setError(t.analysisError);
     }
 
     setLoading(false);
