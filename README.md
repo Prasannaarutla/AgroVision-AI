@@ -1,8 +1,8 @@
-# AgroVision AI 🌾🤖
+# PATRARAKSHA AI 🌾🤖
 
 > **Empowering Agriculture with AI-Driven Crop Disease Detection, Weather Insights, and Smart Farming Solutions.**
 
-AgroVision AI is an end-to-end intelligent agricultural assistant designed to help farmers and agricultural professionals detect crop diseases instantly using computer vision, receive tailored treatment dosage recommendations, monitor micro-climatic environmental risks, and find nearby agricultural supply stores.
+PATRARAKSHA AI is an end-to-end intelligent agricultural assistant designed to help farmers and agricultural professionals detect crop diseases instantly using computer vision, receive tailored treatment dosage recommendations, monitor micro-climatic environmental risks, and find nearby agricultural supply stores.
 
 ---
 

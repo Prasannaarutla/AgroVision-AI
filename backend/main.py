@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-app = FastAPI(title="AgroVision AI - Crop Disease Detection API")
+app = FastAPI(title="PATRARAKSHA AI - Crop Disease Detection API")
 
 # Configure CORS for frontend access from any origin
 app.add_middleware(
@@ -54,7 +54,7 @@ def get_model():
 def read_root():
     return {
         "status": "ok",
-        "service": "AgroVision AI Disease Detection API",
+        "service": "PATRARAKSHA AI Disease Detection API",
         "model_loaded": model is not None
     }
 
@@ -545,16 +545,10 @@ async def predict(
         with torch.no_grad():
             results = model(image, conf=0.25, verbose=False)
 
-        # 2. Generate authentic YOLOv8 annotated image with true bounding boxes & class confidence badges
-        annotated_img_bgr = results[0].plot()
-        annotated_img = Image.fromarray(cv2.cvtColor(annotated_img_bgr, cv2.COLOR_BGR2RGB))
-        buffered = io.BytesIO()
-        annotated_img.save(buffered, format="JPEG", quality=90)
-        img_str = base64.b64encode(buffered.getvalue()).decode()
-
-        # 3. Extract predictions directly from YOLO detections
-        best_box = None
-        disease_boxes = []
+        # 2. Extract ALL detections and group by class
+        # Use weighted voting: max_conf × (1 + count_bonus) so that a class
+        # with multiple detections beats one with a single higher-confidence box.
+        class_groups = {}   # cls_name -> list of (conf, box)
         healthy_boxes = []
 
         if results and len(results) > 0 and results[0].boxes and len(results[0].boxes) > 0:
@@ -563,20 +557,80 @@ async def predict(
                 cls_name = str(model.names.get(cls_id, "")).upper()
                 c = float(box.conf[0])
                 if cls_name in ["RUST", "POWDERY"]:
-                    disease_boxes.append((c, cls_name, box))
+                    class_groups.setdefault(cls_name, []).append((c, box))
                 else:
                     healthy_boxes.append((c, cls_name, box))
 
-        if disease_boxes:
-            disease_boxes.sort(key=lambda x: x[0], reverse=True)
-            confidence, pred_class, best_box = disease_boxes[0]
-        elif healthy_boxes:
-            healthy_boxes.sort(key=lambda x: x[0], reverse=True)
-            confidence, pred_class, best_box = healthy_boxes[0]
+        # 3. Pick the winning disease class using weighted score
+        pred_class = None
+        confidence = 0.0
+        winning_boxes = []   # boxes belonging to the winning class only
+
+        if class_groups:
+            best_score = -1
+            for cls_name, boxes in class_groups.items():
+                max_conf = max(c for c, _ in boxes)
+                count_bonus = 1 + (len(boxes) - 1) * 0.15   # each extra box adds 15%
+                score = max_conf * count_bonus
+                print(f"[VOTE] {cls_name}: max_conf={max_conf:.3f}, count={len(boxes)}, score={score:.3f}")
+                if score > best_score:
+                    best_score = score
+                    pred_class = cls_name
+                    confidence = max_conf
+                    winning_boxes = boxes
+
+        if not pred_class:
+            if healthy_boxes:
+                healthy_boxes.sort(key=lambda x: x[0], reverse=True)
+                confidence, pred_class, hbox = healthy_boxes[0]
+            else:
+                # No detections at all — classify as HEALTHY
+                pred_class = "HEALTHY"
+                confidence = 0.95
+
+        # 4. Draw annotation using ONLY the winning class boxes
+        # This ensures the annotated image always matches the displayed result card.
+        img_array = np.array(image)
+        ann_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        h_img, w_img = ann_bgr.shape[:2]
+
+        if pred_class == "RUST":
+            box_color = (0, 130, 255)      # BGR amber-orange
+            label_color = (0, 130, 255)
+        elif pred_class == "POWDERY":
+            box_color = (230, 160, 30)     # BGR steel-blue
+            label_color = (230, 160, 30)
         else:
-            # When no diseased bounding boxes are detected by YOLO, the foliage is classified as HEALTHY
-            pred_class = "HEALTHY"
-            confidence = 0.95
+            box_color = (50, 200, 80)      # BGR green
+            label_color = (50, 200, 80)
+
+        if winning_boxes:
+            for conf_val, wbox in winning_boxes:
+                xyxy = wbox.xyxy[0].cpu().numpy().astype(int)
+                x1, y1, x2, y2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+                # Draw filled semi-transparent rectangle
+                overlay = ann_bgr.copy()
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), box_color, cv2.FILLED)
+                cv2.addWeighted(overlay, 0.10, ann_bgr, 0.90, 0, ann_bgr)
+                # Solid border
+                cv2.rectangle(ann_bgr, (x1, y1), (x2, y2), box_color, 2)
+                # Label tag
+                tag = f"{pred_class} {conf_val:.2f}"
+                (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+                tag_y = max(y1 - 4, th + 6)
+                cv2.rectangle(ann_bgr, (x1, tag_y - th - 4), (x1 + tw + 8, tag_y + 2), box_color, cv2.FILLED)
+                cv2.putText(ann_bgr, tag, (x1 + 4, tag_y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+
+        # HUD banner at the top showing the final diagnosis
+        banner_text = f"{pred_class.replace('POWDERY', 'POWDERY MILDEW').replace('RUST', 'LEAF RUST')} ({int(confidence * 100)}%)"
+        cv2.rectangle(ann_bgr, (12, 12), (min(w_img - 12, 14 + len(banner_text) * 11), 52), (10, 10, 20), cv2.FILLED)
+        cv2.rectangle(ann_bgr, (12, 12), (min(w_img - 12, 14 + len(banner_text) * 11), 52), box_color, 1)
+        cv2.putText(ann_bgr, banner_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.80, label_color, 2, cv2.LINE_AA)
+
+        annotated_img = Image.fromarray(cv2.cvtColor(ann_bgr, cv2.COLOR_BGR2RGB))
+        buffered = io.BytesIO()
+        annotated_img.save(buffered, format="JPEG", quality=90)
+        img_str = base64.b64encode(buffered.getvalue()).decode()
 
         d_upper = pred_class.strip()
         is_detected = d_upper in ["RUST", "POWDERY"]

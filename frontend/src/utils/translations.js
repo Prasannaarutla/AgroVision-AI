@@ -1,6 +1,6 @@
 export const translations = {
   en: {
-    title: "AgroVision AI",
+    title: "PATRARAKSHA AI",
     subtitle: "Smart Crop Disease Detection Platform",
     uploadTitle: "Click or drag image here to upload",
     uploadSubtitle: "Supports JPG, PNG (Max 10MB)",
@@ -143,7 +143,7 @@ export const translations = {
     offlineDetectNote: "Offline AI detection is active"
   },
   te: {
-    title: "అగ్రోవిజన్ AI",
+    title: "పత్రరక్ష AI (PATRARAKSHA AI)",
     subtitle: "స్మార్ట్ పంట వ్యాధి గుర్తింపు పద్ధతి",
     uploadTitle: "ఫోటోను ఇక్కడ అప్లోడ్ చేయండి",
     uploadSubtitle: "JPG, PNG సపోర్ట్ చేస్తుంది",
@@ -286,7 +286,7 @@ export const translations = {
     offlineDetectNote: "ఆఫ్‌లైన్ AI గుర్తింపు సక్రియంగా ఉంది"
   },
   hi: {
-    title: "एग्रोविजन AI",
+    title: "पत्ररक्षा AI (PATRARAKSHA AI)",
     subtitle: "स्मार्ट फसल रोग पहचान प्रणाली",
     uploadTitle: "अपलोड करने के लिए यहां क्लिक करें",
     uploadSubtitle: "JPG, PNG (अधिकतम 10MB)",
