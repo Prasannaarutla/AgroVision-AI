@@ -101,7 +101,7 @@ function App() {
       const formData = new FormData();
       formData.append('file', selectedImage.file);
       formData.append('lang', language);
-      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 80000);
+      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 18000);
       if (response && response.ok) {
         const data = await response.json();
         if (data && data.disease) {
@@ -110,16 +110,26 @@ function App() {
           if (data.annotated_image) {
             setAnnotatedImage(data.annotated_image);
           }
-        } else {
-          setError(t.analysisError);
+          completed = true;
         }
-      } else {
-        const errData = await response.json().catch(() => ({}));
-        setError(errData.detail || t.analysisError);
       }
     } catch (apiErr) {
-      console.error('Model API connection error:', apiErr);
-      setError(t.analysisError);
+      console.warn('Backend API connection or timeout, engaging resilient client fallback:', apiErr);
+    }
+
+    // 2. Seamless on-device fallback if cloud API is sleeping, cold-starting, or overloaded
+    if (!completed) {
+      try {
+        const offlineResult = await runOfflineDetection(selectedImage, language, true);
+        const localRemedies = getLocalizedHomeRemedies(offlineResult.disease, language);
+        setResult({ ...offlineResult, home_remedies: localRemedies });
+        if (offlineResult.annotated_image) {
+          setAnnotatedImage(offlineResult.annotated_image);
+        }
+      } catch (fallbackErr) {
+        console.error('Diagnostic error:', fallbackErr);
+        setError(t.analysisError);
+      }
     }
 
     setLoading(false);

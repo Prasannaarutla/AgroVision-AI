@@ -2,15 +2,19 @@ import os
 # Prevent Ultralytics from running pip install / autoupdate in the background
 os.environ['YOLO_AUTOINSTALL'] = '0'
 os.environ['YOLO_VERBOSE'] = 'False'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
 
 import io
+import gc
 import base64
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
 import torch
 try:
-    torch.set_num_threads(min(2, os.cpu_count() or 1))
+    torch.set_num_threads(1)
 except Exception:
     pass
 
@@ -522,9 +526,9 @@ async def predict(
             image = Image.open(io.BytesIO(image_data))
             # Auto-rotate based on EXIF tag to fix smartphone photo orientation
             image = ImageOps.exif_transpose(image).convert('RGB')
-            # Preserve high resolution for YOLO; only downscale if excessively large (>1600px)
-            if max(image.size) > 1600:
-                image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+            # Scale to standard YOLO input dimensions (max 640px) to prevent cloud memory exhaustion
+            if max(image.size) > 640:
+                image.thumbnail((640, 640), Image.Resampling.LANCZOS)
         except Exception:
             return JSONResponse(
                 status_code=400,
@@ -541,9 +545,9 @@ async def predict(
                 headers={"Access-Control-Allow-Origin": "*"}
             )
 
-        # 1. Run native Ultralytics YOLOv8 inference exactly as trained in Google Colab
-        with torch.no_grad():
-            results = model(image, conf=0.25, verbose=False)
+        # 1. Run native Ultralytics YOLOv8 inference with memory efficiency
+        with torch.inference_mode():
+            results = model(image, imgsz=512, conf=0.25, verbose=False)
 
         # 2. Extract ALL detections and group by class
         # Use weighted voting: max_conf × (1 + count_bonus) so that a class
