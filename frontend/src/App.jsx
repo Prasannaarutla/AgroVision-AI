@@ -101,7 +101,7 @@ function App() {
       const formData = new FormData();
       formData.append('file', selectedImage.file);
       formData.append('lang', language);
-      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 18000);
+      const response = await fetchWithTimeout(API_URL, { method: 'POST', body: formData }, 25000);
       if (response && response.ok) {
         const data = await response.json();
         if (data && data.disease) {
@@ -120,7 +120,7 @@ function App() {
     // 2. Seamless on-device fallback if cloud API is sleeping, cold-starting, or overloaded
     if (!completed) {
       try {
-        const offlineResult = await runOfflineDetection(selectedImage, language, true);
+        const offlineResult = await runOfflineDetection(selectedImage, language, isOffline);
         const localRemedies = getLocalizedHomeRemedies(offlineResult.disease, language);
         setResult({ ...offlineResult, home_remedies: localRemedies });
         if (offlineResult.annotated_image) {

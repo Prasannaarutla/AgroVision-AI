@@ -152,16 +152,14 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
               }
 
               // 4. RUST DISEASE IDENTIFICATION:
-              // Warm fiery orange or reddish-amber rust pustules on leaf blade
-              // True rust pustules are vivid fiery orange (r >= 140, r - g >= 30, r > b * 1.75), distinctly different from dull soil
+              // Vivid fiery orange, amber, or reddish-brown rust pustules on leaf surface
               const isRustSpot = (
-                r >= 140 && 
-                r > b * 1.75 && 
-                r > g * 1.22 && 
-                (r - g) >= 30 &&
-                b < 85 && 
-                g >= 35 &&
-                g <= 150
+                r >= 115 && 
+                r > g * 1.10 && 
+                r > b * 1.30 && 
+                (r - b) >= 30 && 
+                g >= 30 && 
+                b < 140
               );
 
               if (isRustSpot) {
@@ -171,15 +169,17 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
               }
 
               // 5. POWDERY MILDEW IDENTIFICATION:
-              // Pale chalky whitish/grayish fungal coating on foliage.
+              // True chalky white / grayish fungal powder on foliage (must not be sunlit green leaf or sky glare)
               const colorDelta = Math.max(r, g, b) - Math.min(r, g, b);
+              const isGreenReflect = (g > r + 15 && g > b + 15);
               const isPowderySpot = (
-                brightness >= 118 && 
-                brightness <= 240 && 
-                colorDelta <= 55 &&
-                r >= 85 && 
-                g >= 90 && 
-                b >= 80
+                brightness >= 160 && 
+                brightness <= 245 && 
+                colorDelta <= 28 &&
+                r >= 135 && 
+                g >= 135 && 
+                b >= 125 &&
+                !isGreenReflect
               );
 
               if (isPowderySpot) {
@@ -199,11 +199,11 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
           let isDetected = false;
 
           // EVALUATE DISEASE BASED ON ACTUAL LESION EVIDENCE & RELATIVE DOMINANCE
-          let hasRust = (rustRatio > 0.010 || (rustPixels >= 120 && rustRatio > 0.005));
+          let hasRust = (rustRatio > 0.008 || (rustPixels >= 60 && rustRatio > 0.004));
           let hasPowdery = (powderyRatio > 0.012 || (powderyPixels >= 150 && powderyRatio > 0.006));
 
           // Suppress false positive rust/powdery on predominantly healthy green leaves
-          if (foliagePixels > 250 && rustRatio < 0.004) {
+          if (foliagePixels > 250 && rustRatio < 0.003) {
             hasRust = false;
           }
           if (foliagePixels > 250 && powderyRatio < 0.005) {
@@ -214,20 +214,18 @@ export async function runOfflineDetection(selectedImage, language = 'en', isExpl
           let isPowdery = false;
 
           if (hasRust && hasPowdery) {
-            // Both detected - choose whichever has significantly stronger visual evidence
-            if (powderyPixels >= rustPixels * 1.2 || powderyRatio >= rustRatio * 1.2) {
+            // When both are triggered, amber/orange rust pustules are distinctive; prioritize Rust unless Powdery is overwhelmingly dominant
+            if (powderyPixels > rustPixels * 3.0) {
               isPowdery = true;
-            } else if (rustPixels >= powderyPixels * 1.2 || rustRatio >= powderyRatio * 1.2) {
+            } else if (rustPixels >= 60) {
               isRust = true;
             } else {
-              // Whichever has higher lesion pixel count
-              isPowdery = powderyPixels >= rustPixels;
-              isRust = !isPowdery;
+              isPowdery = true;
             }
-          } else if (hasPowdery) {
-            isPowdery = true;
           } else if (hasRust) {
             isRust = true;
+          } else if (hasPowdery) {
+            isPowdery = true;
           }
 
           if (isPowdery) {
